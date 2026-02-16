@@ -1,0 +1,5 @@
+{
+  "name": "DukaManager Pro",
+  "description": "A modern, offline-capable Point of Sale system tailored for Kenyan businesses. Features inventory management, debt tracking (Daftari), M-Pesa reconciliation, and AI-powered business insights.",
+  "requestFramePermissions": []
+}
