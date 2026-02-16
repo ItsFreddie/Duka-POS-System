@@ -87,7 +87,8 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
         name: headers.findIndex(h => h.includes('name') || h.includes('product') || h.includes('item')),
         category: headers.findIndex(h => h.includes('category') || h.includes('cat')),
         buy: headers.findIndex(h => h.includes('buy') || h.includes('cost')),
-        sell: headers.findIndex(h => h.includes('sell') || h.includes('price')),
+        // Fix: Explicitly exclude 'buy' and 'cost' when searching for 'price' to prevent matching 'Buying Price'
+        sell: headers.findIndex(h => h.includes('sell') || (h.includes('price') && !h.includes('buy') && !h.includes('cost'))),
         stock: headers.findIndex(h => h.includes('stock') || h.includes('qty') || h.includes('quantity')),
         unit: headers.findIndex(h => h.includes('unit') || h.includes('measure')),
         expiry: headers.findIndex(h => h.includes('expiry') || h.includes('expire') || h.includes('date'))
