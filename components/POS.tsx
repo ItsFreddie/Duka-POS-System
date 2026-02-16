@@ -1,6 +1,6 @@
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Search, ShoppingCart, Trash2, Plus, Minus, CreditCard, Banknote, User, Coins, X, Split, AlertCircle, RefreshCw, Box, ArrowRight, Receipt, ChevronRight, UserPlus, Target, Calendar, AlertTriangle } from 'lucide-react';
+import { Search, ShoppingCart, Trash2, Plus, Minus, CreditCard, Banknote, User, Coins, X, Split, AlertCircle, RefreshCw, Box, ArrowRight, Receipt, ChevronRight, UserPlus, Target, Calendar, AlertTriangle, ChevronUp } from 'lucide-react';
 import { Product, CartItem, Transaction, StoreProfile, Customer } from '../types';
 import confetti from 'canvas-confetti';
 
@@ -23,6 +23,9 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
   const [categoryFilter, setCategoryFilter] = useState<string>('All');
   const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'M-Pesa' | 'Debt' | 'Split'>('Cash');
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>('');
+  
+  // Mobile Cart State
+  const [isMobileCartOpen, setIsMobileCartOpen] = useState(false);
   
   // Payment Details
   const [cashTendered, setCashTendered] = useState<string>('');
@@ -106,6 +109,7 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
     if(confirm("Are you sure you want to clear the cart?")) {
       setCart([]);
       resetPaymentFields();
+      setIsMobileCartOpen(false);
     }
   }
 
@@ -263,6 +267,7 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
     onCompleteSale(transaction);
     setCart([]);
     resetPaymentFields();
+    setIsMobileCartOpen(false);
   };
 
   const handlePettyCashSubmit = (e: React.FormEvent) => {
@@ -301,17 +306,18 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
 
   return (
     <div className="flex flex-col lg:flex-row h-full gap-4 lg:gap-6">
+      
       {/* LEFT: Product Grid Panel */}
       <div className="flex-1 flex flex-col bg-white dark:bg-gray-900 rounded-3xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-800 overflow-hidden relative">
         {/* Header/Filters */}
-        <div className="p-4 space-y-4 bg-white/80 dark:bg-gray-900/90 backdrop-blur-xl sticky top-0 z-20 border-b border-gray-100 dark:border-gray-800">
+        <div className="p-3 md:p-4 space-y-3 md:space-y-4 bg-white/80 dark:bg-gray-900/90 backdrop-blur-xl sticky top-0 z-20 border-b border-gray-100 dark:border-gray-800">
           <div className="flex justify-between items-center gap-3">
             <div className="relative flex-1 group">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-primary-500 transition-colors w-5 h-5" />
               <input
                 type="text"
                 placeholder="Search products..."
-                className="w-full pl-11 pr-4 py-3.5 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-2xl focus:outline-none focus:ring-2 focus:ring-primary-500 text-gray-900 dark:text-gray-100 text-sm font-medium transition-all shadow-sm group-hover:bg-white dark:group-hover:bg-black"
+                className="w-full pl-11 pr-4 py-3 md:py-3.5 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-2xl focus:outline-none focus:ring-2 focus:ring-primary-500 text-gray-900 dark:text-gray-100 text-sm font-medium transition-all shadow-sm group-hover:bg-white dark:group-hover:bg-black"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
@@ -320,9 +326,9 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
             <div className="flex items-center gap-2">
                 <button 
                   onClick={() => setIsPettyCashOpen(true)}
-                  className="bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 px-5 py-3.5 rounded-2xl text-sm font-bold flex items-center gap-2 hover:bg-red-100 dark:hover:bg-red-900/40 transition-all border border-red-100 dark:border-red-900/30 shadow-sm active:scale-95"
+                  className="bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 p-3 md:px-5 md:py-3.5 rounded-2xl text-sm font-bold flex items-center gap-2 hover:bg-red-100 dark:hover:bg-red-900/40 transition-all border border-red-100 dark:border-red-900/30 shadow-sm active:scale-95"
                 >
-                  <Coins className="w-4 h-4" /> <span className="hidden sm:inline">Withdraw</span>
+                  <Coins className="w-5 h-5 md:w-4 md:h-4" /> <span className="hidden md:inline">Withdraw</span>
                 </button>
             </div>
           </div>
@@ -331,7 +337,7 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
               <button
                 key={cat}
                 onClick={() => setCategoryFilter(cat)}
-                className={`px-5 py-2.5 rounded-2xl text-sm font-bold whitespace-nowrap transition-all border ${
+                className={`px-4 py-2 md:px-5 md:py-2.5 rounded-2xl text-xs md:text-sm font-bold whitespace-nowrap transition-all border ${
                   categoryFilter === cat
                     ? 'bg-gray-900 dark:bg-white text-white dark:text-black border-gray-900 dark:border-white shadow-lg'
                     : 'bg-gray-200 dark:bg-gray-800 text-gray-700 dark:text-gray-400 border-transparent hover:bg-gray-300 dark:hover:bg-gray-700'
@@ -344,8 +350,8 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
         </div>
 
         {/* Grid */}
-        <div className="flex-1 overflow-y-auto p-4 bg-gray-50/30 dark:bg-black/20">
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
+        <div className="flex-1 overflow-y-auto p-2 md:p-4 bg-gray-50/30 dark:bg-black/20 pb-24 md:pb-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-2 md:gap-4">
             {filteredProducts.map(product => {
               const isOutOfStock = product.stock <= 0;
               const isLowStock = product.stock <= 5 && !isOutOfStock;
@@ -354,14 +360,13 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
               
               const isExpired = daysToExpiry !== null && daysToExpiry <= 0;
               const isCritical = daysToExpiry !== null && daysToExpiry > 0 && daysToExpiry <= 2;
-              // Modified: Only show "Soon" if between 2 and 3 days (essentially the 3rd day)
               const isExpiringSoon = daysToExpiry !== null && daysToExpiry > 2 && daysToExpiry <= 3;
 
               return (
                 <div
                   key={product.id}
                   onClick={() => !isOutOfStock && addToCart(product)}
-                  className={`group relative bg-white dark:bg-gray-800 border rounded-2xl p-3 transition-all duration-300 shadow-[0_4px_12px_rgba(0,0,0,0.08)] flex flex-col
+                  className={`group relative bg-white dark:bg-gray-800 border rounded-2xl p-2 md:p-3 transition-all duration-300 shadow-[0_4px_12px_rgba(0,0,0,0.08)] flex flex-col
                     ${isOutOfStock 
                         ? 'opacity-60 cursor-not-allowed border-gray-200 dark:border-gray-800 grayscale' 
                         : 'cursor-pointer border-gray-200 dark:border-gray-800 hover:border-primary-500 dark:hover:border-primary-500 active:scale-[0.97] hover:shadow-xl'
@@ -369,7 +374,7 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
                     ${isCritical ? 'border-red-500 ring-1 ring-red-500' : isLowStock ? 'border-red-200 dark:border-red-900/50' : ''}
                   `}
                 >
-                  <div className="aspect-[4/3] rounded-xl overflow-hidden bg-gray-50 dark:bg-gray-900 mb-3 relative shadow-inner">
+                  <div className="aspect-[4/3] rounded-xl overflow-hidden bg-gray-50 dark:bg-gray-900 mb-2 md:mb-3 relative shadow-inner">
                     <img src={product.image} alt={product.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
                     
                     {/* Stock Badge */}
@@ -377,16 +382,9 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
                       {product.stock} {product.measurementUnit || 'pcs'}
                     </div>
 
-                    {/* Expiry Badge Overlay - Only if critical or expired or specifically day 3 */}
                     {(isExpired || isCritical || isExpiringSoon) && (
                          <div className={`absolute top-2 left-2 text-[10px] px-2 py-1 rounded-md font-bold shadow-md text-white flex items-center gap-1 ${isExpired ? 'bg-red-800' : isCritical ? 'bg-red-500' : 'bg-orange-500'}`}>
-                            {isExpired ? (
-                                <>EXPIRED</>
-                            ) : isCritical ? (
-                                <><AlertTriangle className="w-3 h-3" /> CRITICAL</>
-                            ) : (
-                                <>EXP SOON</>
-                            )}
+                            {isExpired ? 'EXPIRED' : isCritical ? <><AlertTriangle className="w-3 h-3" /> CRITICAL</> : 'EXP SOON'}
                          </div>
                     )}
 
@@ -420,10 +418,64 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
         </div>
       </div>
 
-      {/* RIGHT: Cart Sidebar */}
-      <div className="w-full lg:w-[420px] flex flex-col bg-white dark:bg-gray-900 rounded-3xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-800 overflow-hidden relative z-10">
+      {/* Floating Mobile Cart Summary */}
+      {!isMobileCartOpen && cart.length > 0 && (
+         <div className="md:hidden fixed bottom-4 left-4 right-4 z-40 animate-slide-up">
+            <button 
+              onClick={() => setIsMobileCartOpen(true)}
+              className="w-full bg-gray-900/95 dark:bg-white/95 backdrop-blur-xl text-white dark:text-black p-4 rounded-2xl shadow-2xl border border-white/10 dark:border-black/10 flex items-center justify-between group active:scale-95 transition-all"
+            >
+               <div className="flex items-center gap-3">
+                  <div className="bg-white/20 dark:bg-black/10 w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm">
+                     {cart.length}
+                  </div>
+                  <div className="text-left">
+                     <p className="text-[10px] text-gray-300 dark:text-gray-600 font-bold uppercase tracking-widest leading-tight">Total</p>
+                     <p className="font-black text-xl leading-none">{storeProfile.currency} {total.toLocaleString()}</p>
+                  </div>
+               </div>
+               <div className="flex items-center gap-2 pr-1">
+                  <span className="text-sm font-bold">View Cart</span>
+                  <ChevronUp className="w-5 h-5 animate-bounce" />
+               </div>
+            </button>
+         </div>
+      )}
+
+      {/* Mobile Overlay Backdrop */}
+      {isMobileCartOpen && (
+        <div 
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 md:hidden animate-fade-in"
+          onClick={() => setIsMobileCartOpen(false)}
+        />
+      )}
+
+      {/* RIGHT: Cart Sidebar / Mobile Bottom Sheet */}
+      <div className={`
+        flex flex-col 
+        bg-white dark:bg-gray-900 
+        overflow-hidden 
+        transition-all duration-300
+        
+        // Desktop Styles (Sidebar)
+        md:w-[420px] md:rounded-3xl md:border md:border-gray-200 md:dark:border-gray-800 md:shadow-[0_4px_12px_rgba(0,0,0,0.08)] md:relative md:z-10 md:h-auto md:flex
+
+        // Mobile Styles (Bottom Sheet)
+        ${isMobileCartOpen ? 
+          'fixed bottom-0 left-0 right-0 h-[85vh] z-50 rounded-t-3xl shadow-[0_-10px_40px_-10px_rgba(0,0,0,0.3)] border-t border-white/20 animate-slide-up' : 
+          'hidden'
+        }
+        // Glass effect on mobile
+        ${isMobileCartOpen ? 'bg-white/95 dark:bg-gray-900/95 backdrop-blur-xl' : ''}
+      `}>
+        
+        {/* Mobile Drag Handle */}
+        <div className="md:hidden w-full flex justify-center pt-3 pb-1 shrink-0" onClick={() => setIsMobileCartOpen(false)}>
+            <div className="w-12 h-1.5 bg-gray-300 dark:bg-gray-600 rounded-full" />
+        </div>
+
         {/* Cart Header */}
-        <div className="p-4 border-b border-gray-100 dark:border-gray-800 flex justify-between items-center bg-white dark:bg-gray-900">
+        <div className="p-4 border-b border-gray-100 dark:border-gray-800 flex justify-between items-center bg-transparent">
           <div className="flex items-center gap-3">
              <div className="w-10 h-10 rounded-2xl bg-primary-50 dark:bg-primary-900/20 flex items-center justify-center text-primary-600 dark:text-primary-400 shadow-inner">
                <Receipt className="w-5 h-5" />
@@ -433,11 +485,17 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
                 <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wide">{cart.length} Items</p>
              </div>
           </div>
-          {cart.length > 0 && (
-             <button onClick={clearCart} className="w-9 h-9 flex items-center justify-center rounded-xl bg-red-50 dark:bg-red-900/20 text-red-500 hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors">
-               <Trash2 className="w-4 h-4" />
+          <div className="flex gap-2">
+             {cart.length > 0 && (
+                <button onClick={clearCart} className="w-9 h-9 flex items-center justify-center rounded-xl bg-red-50 dark:bg-red-900/20 text-red-500 hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors">
+                  <Trash2 className="w-4 h-4" />
+                </button>
+             )}
+             {/* Mobile Close Button */}
+             <button onClick={() => setIsMobileCartOpen(false)} className="md:hidden w-9 h-9 flex items-center justify-center rounded-xl bg-gray-100 dark:bg-gray-800 text-gray-500">
+                <ChevronRight className="w-5 h-5 rotate-90" />
              </button>
-           )}
+           </div>
         </div>
 
         {/* Cart Items List - Expanded space */}
