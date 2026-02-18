@@ -24,6 +24,14 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
   const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'M-Pesa' | 'Debt' | 'Split'>('Cash');
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>('');
   
+  // Clock State
+  const [currentTime, setCurrentTime] = useState(new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  
   // Mobile Cart State
   const [isMobileCartOpen, setIsMobileCartOpen] = useState(false);
   
@@ -324,6 +332,14 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
             </div>
             
             <div className="flex items-center gap-2">
+                {/* Clock Display */}
+                <div className="hidden lg:flex flex-col items-end px-3 py-1.5 bg-gray-100 dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 min-w-[80px]">
+                   <span className="text-[10px] font-bold text-gray-500 uppercase leading-none mb-0.5">{currentTime.toLocaleDateString([], {weekday: 'short', day: 'numeric'})}</span>
+                   <span className="text-sm font-black text-gray-900 dark:text-white leading-none font-mono">
+                      {currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                   </span>
+                </div>
+
                 <button 
                   onClick={() => setIsPettyCashOpen(true)}
                   className="bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 p-3 md:px-5 md:py-3.5 rounded-2xl text-sm font-bold flex items-center gap-2 hover:bg-red-100 dark:hover:bg-red-900/40 transition-all border border-red-100 dark:border-red-900/30 shadow-sm active:scale-95"
@@ -724,11 +740,11 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
 
             {paymentMethod === 'Debt' && (
                <div className="space-y-2 animate-fade-in p-3 bg-red-50 dark:bg-red-900/10 rounded-xl border border-red-100 dark:border-red-900/20">
-                  <div className="flex gap-2 mb-2">
+                  <div className="flex gap-2 mb-2 items-center">
                       <select 
                         value={selectedCustomerId}
                         onChange={(e) => setSelectedCustomerId(e.target.value)}
-                        className="flex-1 p-2.5 text-sm border border-red-200 dark:border-red-800 rounded-lg dark:bg-black text-gray-900 dark:text-white font-medium focus:ring-2 focus:ring-red-500 outline-none"
+                        className="flex-1 w-full min-w-0 p-2.5 text-sm border border-red-200 dark:border-red-800 rounded-lg dark:bg-black text-gray-900 dark:text-white font-medium focus:ring-2 focus:ring-red-500 outline-none"
                       >
                           <option value="">-- Select Account --</option>
                           {customers.map(c => (
@@ -739,10 +755,11 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
                       </select>
                       <button 
                         onClick={() => setIsNewCustomerOpen(true)}
-                        className="bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 p-2 rounded-lg hover:bg-red-200 transition-colors"
+                        className="shrink-0 bg-red-600 text-white p-2.5 rounded-lg hover:bg-red-700 transition-colors shadow-md flex items-center gap-1.5"
                         title="Add New Customer"
                       >
-                          <UserPlus className="w-5 h-5" />
+                          <UserPlus className="w-4 h-4" />
+                          <span className="text-xs font-bold">New</span>
                       </button>
                   </div>
                   
