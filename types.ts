@@ -47,6 +47,7 @@ export interface Customer {
   name: string;
   phone?: string;
   totalDebt: number;
+  creditBalance: number; // Store credit / Prepayment
   lastTransactionDate?: string;
 }
 
@@ -55,7 +56,7 @@ export interface Transaction {
   date: string;
   items: SaleItem[];
   total: number;
-  paymentMethod: 'Cash' | 'M-Pesa' | 'Debt' | 'Split';
+  paymentMethod: 'Cash' | 'M-Pesa' | 'Debt' | 'Split' | 'Credit';
   amountPaid: number;
   splitDetails?: {
     cash: number;
@@ -81,6 +82,8 @@ export interface ShiftRecord {
   expenses: Expense[];
   cashRefunds: number;
   mpesaRefunds: number;
+  cashDeposits: number; // New: Track customer credit deposits
+  mpesaDeposits: number; // New: Track customer credit deposits
   actualClosingCash?: number;
   actualClosingMpesa?: number;
   notes?: string;

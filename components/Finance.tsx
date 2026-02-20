@@ -15,6 +15,7 @@ interface FinanceProps {
   customers: Customer[];
   onAddCustomer: (customer: Customer) => void;
   onDeleteCustomer: (id: string) => void;
+  onCustomerDeposit: (customerId: string, amount: number, method: 'Cash' | 'M-Pesa') => void;
   onOpenShift: (cash: number, mpesa: number) => void;
   onCloseShift: (cash: number, mpesa: number) => void;
   onUpdateShift: (cash: number, mpesa: number) => void;
@@ -23,7 +24,7 @@ interface FinanceProps {
   storeProfile: StoreProfile;
 }
 
-export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers, onAddCustomer, onDeleteCustomer, onOpenShift, onCloseShift, onUpdateShift, onPayDebt, onRefund, storeProfile }) => {
+export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers, onAddCustomer, onDeleteCustomer, onCustomerDeposit, onOpenShift, onCloseShift, onUpdateShift, onPayDebt, onRefund, storeProfile }) => {
   const [activeTab, setActiveTab] = useState<'shift' | 'receipts' | 'debts'>('shift');
   const [openingCash, setOpeningCash] = useState('');
   const [openingMpesa, setOpeningMpesa] = useState('');
@@ -43,6 +44,11 @@ export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers
   const [newCustomerName, setNewCustomerName] = useState('');
   const [newCustomerPhone, setNewCustomerPhone] = useState('');
   const [expandedCustomerId, setExpandedCustomerId] = useState<string | null>(null);
+
+  // Deposit State
+  const [depositModal, setDepositModal] = useState<{ isOpen: boolean; customerId: string | null }>({ isOpen: false, customerId: null });
+  const [depositAmount, setDepositAmount] = useState('');
+  const [depositMethod, setDepositMethod] = useState<'Cash' | 'M-Pesa'>('Cash');
 
   // Debt Payment State
   const [payDebtModal, setPayDebtModal] = useState<{ isOpen: boolean; transaction: Transaction | null }>({ isOpen: false, transaction: null });
@@ -103,8 +109,8 @@ export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers
   // Sales Calculation Logic
   const currentShiftSales = shift && shift.isOpen 
     ? transactions
-        .filter(t => new Date(t.date) >= new Date(shift.openedAt) && t.status === 'Completed')
-        .reduce((acc, t) => acc + t.total, 0)
+        .filter(t => new Date(t.date) >= new Date(shift.openedAt) && t.status === 'Completed' && t.paymentMethod !== 'Credit') // Exclude credit usage from cash sales
+        .reduce((acc, t) => acc + (t.amountPaid || 0), 0) // Use amountPaid to capture cash/mpesa part only
     : 0;
 
   const handleOpenShift = (e: React.FormEvent) => {
@@ -164,6 +170,22 @@ export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers
     }
   };
 
+  const handleDepositClick = (e: React.MouseEvent, customerId: string) => {
+      e.stopPropagation();
+      setDepositModal({ isOpen: true, customerId });
+  };
+
+  const handleDepositSubmit = (e: React.FormEvent) => {
+      e.preventDefault();
+      if (depositModal.customerId && depositAmount) {
+          onCustomerDeposit(depositModal.customerId, Number(depositAmount), depositMethod);
+          setDepositModal({ isOpen: false, customerId: null });
+          setDepositAmount('');
+          setDepositMethod('Cash');
+          alert("Deposit successful!");
+      }
+  };
+
   const clearFilters = () => {
     setSearchTerm('');
     setFilterStartDate('');
@@ -180,7 +202,8 @@ export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers
           id: generateId(),
           name: newCustomerName,
           phone: newCustomerPhone,
-          totalDebt: 0
+          totalDebt: 0,
+          creditBalance: 0
       };
       
       onAddCustomer(newCustomer);
@@ -524,6 +547,12 @@ export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers
                            {storeProfile.currency} {currentShiftSales.toLocaleString()}
                         </span>
                      </div>
+                      <div className="flex justify-between p-3 bg-emerald-50 dark:bg-emerald-900/10 rounded-xl border border-emerald-100 dark:border-emerald-900/30 text-emerald-600 dark:text-emerald-400">
+                        <span className="font-medium">Deposits (Credit)</span>
+                        <span className="font-bold">
+                           {storeProfile.currency} {((shift?.cashDeposits || 0) + (shift?.mpesaDeposits || 0)).toLocaleString()}
+                        </span>
+                     </div>
                       <div className="flex justify-between p-3 bg-red-50 dark:bg-red-900/10 rounded-xl border border-red-100 dark:border-red-900/30 text-red-600 dark:text-red-400">
                         <span className="font-medium">Total Expenses</span>
                         <span className="font-bold">
@@ -727,6 +756,7 @@ export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers
                             <th className="p-4 font-bold">Customer Name</th>
                             <th className="p-4 font-bold">Phone</th>
                             <th className="p-4 font-bold">Total Debt</th>
+                            <th className="p-4 font-bold">Credit Balance</th>
                             <th className="p-4 font-bold">Last Activity</th>
                             <th className="p-4 text-right font-bold">Actions</th>
                         </tr>
@@ -742,14 +772,23 @@ export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers
                                         {c.name}
                                     </td>
                                     <td className="p-4 text-gray-500 dark:text-gray-400 font-medium">{c.phone || '-'}</td>
-                                    <td className={`p-4 font-black ${c.totalDebt > 0 ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>
+                                    <td className={`p-4 font-black ${c.totalDebt > 0 ? 'text-red-600 dark:text-red-400' : 'text-gray-400'}`}>
                                         {storeProfile.currency} {c.totalDebt.toLocaleString()}
+                                    </td>
+                                    <td className={`p-4 font-black ${c.creditBalance && c.creditBalance > 0 ? 'text-green-600 dark:text-green-400' : 'text-gray-400'}`}>
+                                        {storeProfile.currency} {(c.creditBalance || 0).toLocaleString()}
                                     </td>
                                     <td className="p-4 text-sm text-gray-500 dark:text-gray-400 font-medium">
                                         {c.lastTransactionDate ? new Date(c.lastTransactionDate).toLocaleDateString() : 'Never'}
                                     </td>
                                     <td className="p-4 text-right text-sm text-gray-400">
                                         <div className="flex justify-end gap-2 items-center">
+                                            <button 
+                                                onClick={(e) => handleDepositClick(e, c.id)}
+                                                className="px-3 py-1.5 bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400 hover:bg-green-100 dark:hover:bg-green-900/40 rounded-lg text-xs font-bold transition-colors border border-green-100 dark:border-green-900/30"
+                                            >
+                                                Deposit
+                                            </button>
                                             <span className="text-xs mr-2 font-bold uppercase tracking-wider text-gray-300">
                                                 {expandedCustomerId === c.id ? 'Close' : 'View'}
                                             </span>
@@ -1013,6 +1052,64 @@ export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers
             </div>
         </div>
       )}
+      {/* Deposit Modal */}
+      {depositModal.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
+          <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-xl w-full max-w-sm overflow-hidden border border-gray-200 dark:border-gray-800">
+            <div className="p-5 border-b border-gray-100 dark:border-gray-800 flex justify-between items-center bg-gray-50 dark:bg-black/20">
+              <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                <Banknote className="w-5 h-5 text-green-500" /> Deposit Funds
+              </h3>
+              <button 
+                onClick={() => setDepositModal({ isOpen: false, customerId: null })}
+                className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form onSubmit={handleDepositSubmit} className="p-6 space-y-4">
+               <div>
+                  <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Amount ({storeProfile.currency})</label>
+                  <input 
+                    type="number" 
+                    required
+                    min="1"
+                    value={depositAmount}
+                    onChange={(e) => setDepositAmount(e.target.value)}
+                    className="w-full p-3 border border-gray-200 dark:border-gray-700 rounded-xl dark:bg-black dark:text-white font-bold text-lg outline-none focus:ring-2 focus:ring-green-500"
+                    placeholder="0.00"
+                  />
+               </div>
+               <div>
+                  <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Payment Method</label>
+                  <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setDepositMethod('Cash')}
+                        className={`p-3 rounded-xl border font-bold text-sm flex items-center justify-center gap-2 ${depositMethod === 'Cash' ? 'bg-gray-900 text-white border-gray-900 dark:bg-white dark:text-black' : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 border-gray-200 dark:border-gray-700'}`}
+                      >
+                          <Banknote className="w-4 h-4" /> Cash
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDepositMethod('M-Pesa')}
+                        className={`p-3 rounded-xl border font-bold text-sm flex items-center justify-center gap-2 ${depositMethod === 'M-Pesa' ? 'bg-green-600 text-white border-green-600' : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 border-gray-200 dark:border-gray-700'}`}
+                      >
+                          <CreditCard className="w-4 h-4" /> M-Pesa
+                      </button>
+                  </div>
+               </div>
+               <button 
+                 type="submit" 
+                 className="w-full py-3.5 bg-green-600 text-white rounded-xl font-bold shadow-lg shadow-green-900/20 hover:bg-green-700 active:scale-95 transition-all"
+               >
+                 Confirm Deposit
+               </button>
+            </form>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };

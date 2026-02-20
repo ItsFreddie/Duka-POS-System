@@ -1,6 +1,6 @@
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Search, ShoppingCart, Trash2, Plus, Minus, CreditCard, Banknote, User, Coins, X, Split, AlertCircle, RefreshCw, Box, ArrowRight, Receipt, ChevronRight, UserPlus, Target, Calendar, AlertTriangle, ChevronUp } from 'lucide-react';
+import { Search, ShoppingCart, Trash2, Plus, Minus, CreditCard, Banknote, User, Coins, X, Split, AlertCircle, RefreshCw, Box, ArrowRight, Receipt, ChevronRight, UserPlus, Target, Calendar, AlertTriangle, ChevronUp, Wallet } from 'lucide-react';
 import { Product, CartItem, Transaction, StoreProfile, Customer } from '../types';
 import confetti from 'canvas-confetti';
 
@@ -255,6 +255,25 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
                mpesa: debtUpfrontMethod === 'M-Pesa' ? upfront : 0
            };
        }
+    }
+    else if (paymentMethod === 'Credit') {
+        if (!selectedCustomerId) {
+            alert("Please select a customer account to use credit!");
+            return;
+        }
+        const customer = customers.find(c => c.id === selectedCustomerId);
+        if (!customer) return;
+
+        if ((customer.creditBalance || 0) < total) {
+            alert(`Insufficient credit balance! Available: ${storeProfile.currency} ${customer.creditBalance || 0}`);
+            return;
+        }
+
+        transactionDetails.amountPaid = total;
+        transactionDetails.status = 'Completed';
+        transactionDetails.customerId = selectedCustomerId;
+        transactionDetails.customerName = customer.name;
+        transactionDetails.customerPhone = customer.phone || '';
     }
 
     const transaction: Transaction = {
@@ -623,12 +642,13 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
           </div>
 
           {/* Payment Method Selector */}
-          <div className="grid grid-cols-4 gap-2 mb-4">
+          <div className="grid grid-cols-5 gap-2 mb-4">
             {[
               { id: 'Cash', icon: Banknote, label: 'Cash', color: 'from-gray-800 to-gray-900' },
               { id: 'M-Pesa', icon: CreditCard, label: 'M-Pesa', color: 'from-green-600 to-emerald-600' },
               { id: 'Split', icon: Split, label: 'Split', color: 'from-blue-600 to-indigo-600' },
               { id: 'Debt', icon: User, label: 'Debt', color: 'from-red-500 to-rose-600' },
+              { id: 'Credit', icon: Wallet, label: 'Credit', color: 'from-purple-500 to-violet-600' },
             ].map(pm => {
                 const isSelected = paymentMethod === pm.id;
                 return (
@@ -823,13 +843,43 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
                   })()}
                 </div>
             )}
+            {paymentMethod === 'Credit' && (
+               <div className="space-y-2 animate-fade-in p-3 bg-purple-50 dark:bg-purple-900/10 rounded-xl border border-purple-100 dark:border-purple-900/20">
+                  <div className="flex gap-2 mb-2 items-center">
+                      <select 
+                        value={selectedCustomerId}
+                        onChange={(e) => setSelectedCustomerId(e.target.value)}
+                        className="flex-1 w-full min-w-0 p-2.5 text-sm border border-purple-200 dark:border-purple-800 rounded-lg dark:bg-black text-gray-900 dark:text-white font-medium focus:ring-2 focus:ring-purple-500 outline-none"
+                      >
+                          <option value="">-- Select Account --</option>
+                          {customers.map(c => (
+                              <option key={c.id} value={c.id}>
+                                  {c.name} {c.phone ? `(${c.phone})` : ''} - Bal: {storeProfile.currency} {c.creditBalance || 0}
+                              </option>
+                          ))}
+                      </select>
+                  </div>
+                  
+                  {selectedCustomerId && (() => {
+                      const customer = customers.find(c => c.id === selectedCustomerId);
+                      const balance = customer?.creditBalance || 0;
+                      const isSufficient = balance >= total;
+                      return (
+                          <div className={`p-3 rounded-lg border text-sm font-bold flex justify-between items-center ${isSufficient ? 'bg-green-50 border-green-200 text-green-700' : 'bg-red-50 border-red-200 text-red-700'}`}>
+                              <span>Available Credit: {storeProfile.currency} {balance.toLocaleString()}</span>
+                              {!isSufficient && <span className="text-xs uppercase bg-red-200 px-2 py-1 rounded">Insufficient</span>}
+                          </div>
+                      );
+                  })()}
+               </div>
+            )}
           </div>
 
           <button
             onClick={handleCheckout}
-            disabled={cart.length === 0 || (paymentMethod === 'Debt' && !selectedCustomerId)}
+            disabled={cart.length === 0 || ((paymentMethod === 'Debt' || paymentMethod === 'Credit') && !selectedCustomerId)}
             className={`w-full font-black py-3.5 rounded-xl shadow-xl transition-all transform active:scale-[0.98] flex items-center justify-center gap-3 text-base ${
-               cart.length === 0 || (paymentMethod === 'Debt' && !selectedCustomerId)
+               cart.length === 0 || ((paymentMethod === 'Debt' || paymentMethod === 'Credit') && !selectedCustomerId)
                ? 'bg-gray-300 text-gray-500 cursor-not-allowed shadow-none'
                : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-900/20'
             }`}

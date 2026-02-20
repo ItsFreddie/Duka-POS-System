@@ -556,7 +556,7 @@ const App = () => {
     });
     setProducts(newProducts);
 
-    // 3. Update Debt Account if applicable
+    // 3. Update Debt/Credit Account if applicable
     if (transaction.paymentMethod === 'Debt' && transaction.customerId) {
         const customer = customers.find(c => c.id === transaction.customerId);
         if (customer) {
@@ -566,6 +566,17 @@ const App = () => {
             const updatedCustomer = {
                 ...customer,
                 totalDebt: customer.totalDebt + debtAdded,
+                lastTransactionDate: new Date().toISOString()
+            };
+            setCustomers(prev => prev.map(c => c.id === customer.id ? updatedCustomer : c));
+            await db.saveCustomer(updatedCustomer);
+        }
+    } else if (transaction.paymentMethod === 'Credit' && transaction.customerId) {
+        const customer = customers.find(c => c.id === transaction.customerId);
+        if (customer) {
+            const updatedCustomer = {
+                ...customer,
+                creditBalance: Math.max(0, (customer.creditBalance || 0) - transaction.total),
                 lastTransactionDate: new Date().toISOString()
             };
             setCustomers(prev => prev.map(c => c.id === customer.id ? updatedCustomer : c));
@@ -598,6 +609,7 @@ const App = () => {
              }
          }
       }
+      // Credit sales do not affect cash/mpesa drawer
       
       const updatedShift = {
         ...currentShift,
@@ -611,9 +623,37 @@ const App = () => {
   };
 
   const handleAddCustomer = async (customer: Customer) => {
-      setCustomers(prev => [...prev, customer]);
-      await db.saveCustomer(customer);
+      const newCustomer = { ...customer, creditBalance: 0 };
+      setCustomers(prev => [...prev, newCustomer]);
+      await db.saveCustomer(newCustomer);
   }
+
+  const handleCustomerDeposit = async (customerId: string, amount: number, method: 'Cash' | 'M-Pesa') => {
+      const customer = customers.find(c => c.id === customerId);
+      if (!customer) return;
+
+      const updatedCustomer = {
+          ...customer,
+          creditBalance: (customer.creditBalance || 0) + amount,
+          lastTransactionDate: new Date().toISOString()
+      };
+      
+      setCustomers(prev => prev.map(c => c.id === customerId ? updatedCustomer : c));
+      await db.saveCustomer(updatedCustomer);
+
+      // Update Shift
+      if (currentShift && currentShift.isOpen) {
+          const updatedShift = {
+              ...currentShift,
+              cashDeposits: (currentShift.cashDeposits || 0) + (method === 'Cash' ? amount : 0),
+              mpesaDeposits: (currentShift.mpesaDeposits || 0) + (method === 'M-Pesa' ? amount : 0),
+              closingCashCalculated: currentShift.closingCashCalculated + (method === 'Cash' ? amount : 0),
+              closingMpesaCalculated: currentShift.closingMpesaCalculated + (method === 'M-Pesa' ? amount : 0)
+          };
+          setCurrentShift(updatedShift);
+          await db.saveShift(updatedShift);
+      }
+  };
 
   const handleDeleteCustomer = async (customerId: string) => {
       // Optimistic update
@@ -638,6 +678,8 @@ const App = () => {
       expenses: [],
       cashRefunds: 0,
       mpesaRefunds: 0,
+      cashDeposits: 0,
+      mpesaDeposits: 0,
       isOpen: true
     };
     setCurrentShift(newShift);
@@ -1352,6 +1394,7 @@ const App = () => {
                 customers={customers}
                 onAddCustomer={handleAddCustomer}
                 onDeleteCustomer={handleDeleteCustomer}
+                onCustomerDeposit={handleCustomerDeposit}
                 onOpenShift={handleOpenShift} 
                 onCloseShift={handleCloseShift}
                 onUpdateShift={handleUpdateShift}
