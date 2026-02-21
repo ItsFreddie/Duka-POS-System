@@ -332,7 +332,7 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
   const quickCashAmounts = [100, 200, 500, 1000];
 
   return (
-    <div className="flex flex-col lg:flex-row h-full gap-4 lg:gap-6">
+    <div className="flex flex-col lg:flex-row h-full gap-3 lg:gap-4">
       
       {/* LEFT: Product Grid Panel */}
       <div className="flex-1 flex flex-col bg-white dark:bg-gray-900 rounded-3xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-800 overflow-hidden relative">
@@ -385,8 +385,8 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
         </div>
 
         {/* Grid */}
-        <div className="flex-1 overflow-y-auto p-2 md:p-4 bg-gray-50/30 dark:bg-black/20 pb-24 md:pb-4">
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-2 md:gap-4">
+        <div className="flex-1 overflow-y-auto p-2 md:p-4 bg-gray-50/30 dark:bg-black/20 pb-24 md:pb-4 custom-scrollbar">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-2 md:gap-3">
             {filteredProducts.map(product => {
               const isOutOfStock = product.stock <= 0;
               const isLowStock = product.stock <= 5 && !isOutOfStock;
@@ -401,45 +401,50 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
                 <div
                   key={product.id}
                   onClick={() => !isOutOfStock && addToCart(product)}
-                  className={`group relative bg-white dark:bg-gray-800 border rounded-2xl p-2 md:p-3 transition-all duration-300 shadow-[0_4px_12px_rgba(0,0,0,0.08)] flex flex-col
+                  className={`group relative bg-white dark:bg-gray-800 border rounded-xl p-2 transition-all duration-300 shadow-sm hover:shadow-md flex flex-col
                     ${isOutOfStock 
                         ? 'opacity-60 cursor-not-allowed border-gray-200 dark:border-gray-800 grayscale' 
-                        : 'cursor-pointer border-gray-200 dark:border-gray-800 hover:border-primary-500 dark:hover:border-primary-500 active:scale-[0.97] hover:shadow-xl'
+                        : 'cursor-pointer border-gray-200 dark:border-gray-700 hover:border-primary-500 dark:hover:border-primary-500 active:scale-[0.98]'
                     }
                     ${isCritical ? 'border-red-500 ring-1 ring-red-500' : isLowStock ? 'border-red-200 dark:border-red-900/50' : ''}
                   `}
                 >
-                  <div className="aspect-[4/3] rounded-xl overflow-hidden bg-gray-50 dark:bg-gray-900 mb-2 md:mb-3 relative shadow-inner">
+                  <div className="aspect-[4/3] rounded-lg overflow-hidden bg-gray-50 dark:bg-gray-900 mb-1.5 relative shadow-inner">
                     <img src={product.image} alt={product.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
                     
                     {/* Stock Badge */}
-                    <div className={`absolute top-2 right-2 text-white text-[10px] px-2.5 py-1 rounded-full font-black shadow-lg backdrop-blur-md ${isOutOfStock ? 'bg-gray-500' : isLowStock ? 'bg-red-500/90' : 'bg-black/60'}`}>
+                    <div className={`absolute top-1.5 right-1.5 text-white text-[9px] px-1.5 py-0.5 rounded-md font-bold shadow-sm backdrop-blur-md ${isOutOfStock ? 'bg-gray-500' : isLowStock ? 'bg-red-500/90' : 'bg-black/60'}`}>
                       {product.stock} {product.measurementUnit || 'pcs'}
                     </div>
 
                     {(isExpired || isCritical || isExpiringSoon) && (
-                         <div className={`absolute top-2 left-2 text-[10px] px-2 py-1 rounded-md font-bold shadow-md text-white flex items-center gap-1 ${isExpired ? 'bg-red-800' : isCritical ? 'bg-red-500' : 'bg-orange-500'}`}>
-                            {isExpired ? 'EXPIRED' : isCritical ? <><AlertTriangle className="w-3 h-3" /> CRITICAL</> : 'EXP SOON'}
+                         <div className={`absolute top-1.5 left-1.5 text-[8px] px-1.5 py-0.5 rounded-sm font-bold shadow-sm text-white flex items-center gap-0.5 ${isExpired ? 'bg-red-800' : isCritical ? 'bg-red-500' : 'bg-orange-500'}`}>
+                            {isExpired ? 'EXPIRED' : isCritical ? <><AlertTriangle className="w-2 h-2" /> CRIT</> : 'EXP'}
                          </div>
                     )}
 
                     {isOutOfStock && (
                         <div className="absolute inset-0 bg-white/50 dark:bg-black/50 flex items-center justify-center">
-                            <span className="bg-red-600 text-white text-xs font-bold px-3 py-1 rounded-full transform -rotate-12 shadow-xl">OUT OF STOCK</span>
+                            <span className="bg-red-600 text-white text-[9px] font-bold px-2 py-0.5 rounded-sm transform -rotate-12 shadow-sm">OUT</span>
                         </div>
                     )}
                   </div>
-                  <h4 className="font-bold text-sm text-gray-800 dark:text-gray-100 truncate mb-1 leading-tight px-1">{product.name}</h4>
-                  <p className="text-primary-600 dark:text-primary-400 font-black text-sm px-1">{storeProfile.currency} {product.sellPrice}</p>
                   
-                  {product.expiryDate && (
-                      <p className={`text-[10px] px-1 mt-1 flex items-center gap-1 font-bold ${isExpired ? 'text-red-700' : isCritical ? 'text-red-500' : isExpiringSoon ? 'text-orange-500' : 'text-gray-400'}`}>
-                          <Calendar className="w-3 h-3" /> 
-                          {new Date(product.expiryDate).toLocaleDateString()}
-                      </p>
-                  )}
+                  <div className="flex-1 flex flex-col justify-between px-0.5">
+                      <h4 className="font-bold text-xs text-gray-800 dark:text-gray-100 line-clamp-2 mb-0.5 leading-tight">{product.name}</h4>
+                      <div>
+                        <p className="text-primary-600 dark:text-primary-400 font-black text-sm">{storeProfile.currency} {product.sellPrice}</p>
+                        
+                        {product.expiryDate && (
+                            <p className={`text-[9px] mt-0.5 flex items-center gap-1 font-bold ${isExpired ? 'text-red-700' : isCritical ? 'text-red-500' : isExpiringSoon ? 'text-orange-500' : 'text-gray-400'}`}>
+                                <Calendar className="w-2.5 h-2.5" /> 
+                                {new Date(product.expiryDate).toLocaleDateString()}
+                            </p>
+                        )}
+                      </div>
+                  </div>
                   
-                  {!isOutOfStock && <div className="absolute inset-0 bg-primary-500/5 opacity-0 group-hover:opacity-100 transition-opacity rounded-2xl pointer-events-none"></div>}
+                  {!isOutOfStock && <div className="absolute inset-0 bg-primary-500/5 opacity-0 group-hover:opacity-100 transition-opacity rounded-xl pointer-events-none"></div>}
                 </div>
               );
             })}
@@ -493,7 +498,7 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
         transition-all duration-300
         
         // Desktop Styles (Sidebar)
-        md:w-[420px] md:rounded-3xl md:border md:border-gray-200 md:dark:border-gray-800 md:shadow-[0_4px_12px_rgba(0,0,0,0.08)] md:relative md:z-10 md:h-auto md:flex
+        md:w-[380px] md:rounded-3xl md:border md:border-gray-200 md:dark:border-gray-800 md:shadow-[0_4px_12px_rgba(0,0,0,0.08)] md:relative md:z-10 md:h-full md:flex
 
         // Mobile Styles (Bottom Sheet)
         ${isMobileCartOpen ? 

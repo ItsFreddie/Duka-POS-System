@@ -1341,7 +1341,7 @@ const App = () => {
           </header>
         )}
 
-        <div className="flex-1 overflow-auto p-4 lg:p-6 relative">
+        <div className={`flex-1 relative ${appMode === 'POS' ? 'overflow-hidden p-2 lg:p-4' : 'overflow-auto p-4 lg:p-6'}`}>
            {/* Background decorative blobs (Shared) */}
            <div className="absolute top-0 left-0 w-64 h-64 bg-primary-500/5 rounded-full blur-3xl -translate-x-1/2 -translate-y-1/2 pointer-events-none"></div>
            <div className="absolute bottom-0 right-0 w-96 h-96 bg-indigo-500/5 rounded-full blur-3xl translate-x-1/3 translate-y-1/3 pointer-events-none"></div>
