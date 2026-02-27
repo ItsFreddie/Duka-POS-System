@@ -29,6 +29,7 @@ export interface Expense {
   reason: string;
   date: string;
   source?: 'Cash' | 'M-Pesa';
+  category?: string;
 }
 
 export interface StockLog {
@@ -55,6 +56,8 @@ export interface Transaction {
   id: string;
   date: string;
   items: SaleItem[];
+  subtotal?: number;
+  discount?: number;
   total: number;
   paymentMethod: 'Cash' | 'M-Pesa' | 'Debt' | 'Split' | 'Credit';
   amountPaid: number;
@@ -68,6 +71,7 @@ export interface Transaction {
   customerId?: string; // Link to Customer Account
   status: 'Completed' | 'Pending Debt' | 'Refunded';
   isRefunded?: boolean;
+  dueDate?: string;
 }
 
 export interface ShiftRecord {

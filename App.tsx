@@ -30,7 +30,9 @@ import {
   Delete,
   Target,
   History,
-  RotateCcw
+  RotateCcw,
+  Wifi,
+  WifiOff
 } from 'lucide-react';
 
 import { Dashboard } from './components/Dashboard';
@@ -470,9 +472,23 @@ const App = () => {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false); // Desktop collapse
   const [isPinModalOpen, setIsPinModalOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
   
   // App Loading State
   const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   // Data State
   const [profile, setProfile] = useState<StoreProfile>(INITIAL_PROFILE);
@@ -753,14 +769,15 @@ const App = () => {
     }
   };
 
-  const handleExpense = async (amount: number, reason: string, source: 'Cash' | 'M-Pesa' = 'Cash') => {
+  const handleExpense = async (amount: number, reason: string, source: 'Cash' | 'M-Pesa' = 'Cash', category?: string) => {
     if (currentShift && currentShift.isOpen) {
       const newExpense: Expense = {
         id: generateId(),
         amount,
         reason,
         date: new Date().toISOString(),
-        source
+        source,
+        category
       };
       
       const updatedShift = {
@@ -772,6 +789,15 @@ const App = () => {
 
       setCurrentShift(updatedShift);
       await db.saveShift(updatedShift);
+    }
+  };
+
+  const handleSetDueDate = async (transactionId: string, dueDate: string) => {
+    const tx = transactions.find(t => t.id === transactionId);
+    if (tx) {
+      const updatedTx = { ...tx, dueDate };
+      setTransactions(prev => prev.map(t => t.id === transactionId ? updatedTx : t));
+      await db.saveTransaction(updatedTx);
     }
   };
 
@@ -1312,6 +1338,10 @@ const App = () => {
             )}
             
             <div className="flex items-center gap-3 shrink-0">
+               <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[10px] font-bold uppercase tracking-wider ${isOnline ? 'bg-emerald-50 text-emerald-600 border-emerald-200 dark:bg-emerald-900/20 dark:border-emerald-800/50 dark:text-emerald-400' : 'bg-red-50 text-red-600 border-red-200 dark:bg-red-900/20 dark:border-red-800/50 dark:text-red-400'}`}>
+                   {isOnline ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
+                   <span className="hidden sm:inline">{isOnline ? 'Online' : 'Offline'}</span>
+               </div>
                <button 
                  onClick={() => setIsDarkMode(!isDarkMode)}
                  className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500 dark:text-gray-400 transition-colors"
@@ -1337,7 +1367,9 @@ const App = () => {
               <Menu className="w-6 h-6" />
             </button>
             <span className="font-black text-lg tracking-tight">Admin Panel</span>
-            <div className="w-8" />
+            <div className={`flex items-center gap-1.5 px-2 py-1 rounded-full border text-[10px] font-bold uppercase tracking-wider ${isOnline ? 'bg-emerald-50 text-emerald-600 border-emerald-200 dark:bg-emerald-900/20 dark:border-emerald-800/50 dark:text-emerald-400' : 'bg-red-50 text-red-600 border-red-200 dark:bg-red-900/20 dark:border-red-800/50 dark:text-red-400'}`}>
+                {isOnline ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
+            </div>
           </header>
         )}
 
@@ -1400,6 +1432,8 @@ const App = () => {
                 onUpdateShift={handleUpdateShift}
                 onPayDebt={handlePayDebt}
                 onRefund={handleRefund}
+                onRecordExpense={handleExpense}
+                onSetDueDate={handleSetDueDate}
                 storeProfile={profile}
               />
             )}

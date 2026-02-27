@@ -109,6 +109,11 @@ export const updateTransaction = async (transaction: Transaction) => {
 }
 
 // SHIFT
+export const getAllShifts = async (): Promise<ShiftRecord[]> => {
+  const db = await initDB();
+  return db.getAll('shift');
+};
+
 export const getCurrentShift = async (): Promise<ShiftRecord | null> => {
   const db = await initDB();
   const shifts = await db.getAll('shift');

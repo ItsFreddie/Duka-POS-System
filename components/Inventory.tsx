@@ -1,6 +1,7 @@
 
 import React, { useState, useRef } from 'react';
 import { Plus, Edit2, Trash2, Search, Package, Save, X, Download, Upload, Layers, LayoutGrid, List, MoreVertical, ArrowDownUp, GripVertical, FileSpreadsheet, ChevronDown, ChevronRight, ClipboardList, Calendar, AlertTriangle } from 'lucide-react';
+import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import { Product, StoreProfile } from '../types';
 import { getStockLogs } from '../utils/db';
 import { jsPDF } from 'jspdf';
@@ -26,8 +27,8 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
   const [editingId, setEditingId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
-  // Sort by name or price within categories. Drag/Custom order is disabled in grouped view for simplicity.
-  const [sortBy, setSortBy] = useState<'name' | 'stock_asc' | 'stock_desc' | 'price_high' | 'price_low' | 'expiry_soon'>('name');
+  // Sort by name or price within categories.
+  const [sortBy, setSortBy] = useState<'custom' | 'name' | 'stock_asc' | 'stock_desc' | 'price_high' | 'price_low' | 'expiry_soon'>('custom');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const csvInputRef = useRef<HTMLInputElement>(null);
   
@@ -300,9 +301,13 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
   };
 
   const processedProducts = getProcessedProducts();
-  const categories: string[] = (Array.from(new Set(processedProducts.map(p => p.category))) as string[]).sort();
+  let categories: string[] = Array.from(new Set(processedProducts.map(p => p.category)));
+  if (sortBy !== 'custom') {
+      categories.sort();
+  }
 
   const sortProducts = (list: Product[]) => {
+      if (sortBy === 'custom') return list;
       return [...list].sort((a, b) => {
           if (sortBy === 'name') return a.name.localeCompare(b.name);
           if (sortBy === 'stock_asc') return a.stock - b.stock;
@@ -327,6 +332,66 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
     if (daysToExpiry <= 2) return { color: 'bg-amber-500', text: `Exp: ${daysToExpiry} days`, days: daysToExpiry, urgent: true };
     return { color: 'bg-black/60', text: `Exp: ${new Date(expiryDate).toLocaleDateString()}`, days: daysToExpiry, urgent: false };
   }
+
+  const handleDragEnd = (result: DropResult) => {
+    if (!result.destination) return;
+    const { source, destination, type } = result;
+
+    if (type === 'category') {
+      const newCategories = Array.from(categories);
+      const [removed] = newCategories.splice(source.index, 1);
+      newCategories.splice(destination.index, 0, removed);
+
+      const newProducts: Product[] = [];
+      newCategories.forEach(cat => {
+        newProducts.push(...products.filter(p => p.category === cat));
+      });
+      // Add any products that might not have a category in newCategories (shouldn't happen)
+      onReorderProducts(newProducts);
+    } else if (type === 'product') {
+      const sourceCategory = source.droppableId;
+      const destCategory = destination.droppableId;
+
+      const sourceCategoryProducts = products.filter(p => p.category === sourceCategory);
+      const draggedProduct = sourceCategoryProducts[source.index];
+
+      if (sourceCategory === destCategory) {
+        const categoryProducts = products.filter(p => p.category === sourceCategory);
+        categoryProducts.splice(source.index, 1);
+        categoryProducts.splice(destination.index, 0, draggedProduct);
+
+        const finalProducts: Product[] = [];
+        categories.forEach(cat => {
+          if (cat === sourceCategory) {
+            finalProducts.push(...categoryProducts);
+          } else {
+            finalProducts.push(...products.filter(p => p.category === cat));
+          }
+        });
+        onReorderProducts(finalProducts);
+      } else {
+        const updatedProduct = { ...draggedProduct, category: destCategory };
+        
+        const sourceCatProducts = products.filter(p => p.category === sourceCategory);
+        sourceCatProducts.splice(source.index, 1);
+
+        const destCatProducts = products.filter(p => p.category === destCategory);
+        destCatProducts.splice(destination.index, 0, updatedProduct);
+
+        const finalProducts: Product[] = [];
+        categories.forEach(cat => {
+          if (cat === sourceCategory) {
+            finalProducts.push(...sourceCatProducts);
+          } else if (cat === destCategory) {
+            finalProducts.push(...destCatProducts);
+          } else {
+            finalProducts.push(...products.filter(p => p.category === cat));
+          }
+        });
+        onReorderProducts(finalProducts);
+      }
+    }
+  };
 
   return (
     <div className="space-y-6 h-full flex flex-col">
@@ -355,6 +420,7 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
                 onChange={(e) => setSortBy(e.target.value as any)}
                 className="appearance-none pl-9 pr-8 py-2.5 bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-800 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm font-medium dark:text-white cursor-pointer"
               >
+                <option value="custom">Custom Order</option>
                 <option value="name">Name (A-Z)</option>
                 <option value="stock_asc">Stock (Low to High)</option>
                 <option value="stock_desc">Stock (High to Low)</option>
@@ -431,179 +497,219 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto space-y-8 pb-10">
-        {processedProducts.length === 0 && (
-          <div className="p-12 text-center text-gray-500 dark:text-gray-400 bg-white dark:bg-gray-900 rounded-2xl border border-dashed border-gray-300 dark:border-gray-700 mt-4">
-            <Package className="w-12 h-12 mx-auto mb-4 opacity-50" />
-            <h3 className="text-lg font-bold mb-1">No products found</h3>
-            <p>Try adjusting your search, add a new product, or import a CSV file.</p>
-          </div>
-        )}
-
-        {categories.map(category => {
-            const categoryProducts = sortProducts(processedProducts.filter(p => p.category === category));
-            if (categoryProducts.length === 0) return null;
-            const isCollapsed = collapsedCategories[category];
-
-            return (
-                <div key={category} className="space-y-4">
-                    <div 
-                        onClick={() => toggleCategory(category)}
-                        className="flex items-center gap-2 cursor-pointer group select-none"
-                    >
-                        <div className="p-1 rounded-md bg-gray-100 dark:bg-gray-800 text-gray-500 group-hover:text-primary-600 transition-colors">
-                            {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                        </div>
-                        <h3 className="text-lg font-bold text-gray-800 dark:text-white group-hover:text-primary-600 transition-colors flex items-center gap-2">
-                            {category}
-                            <span className="text-xs font-normal bg-gray-100 dark:bg-gray-800 text-gray-500 px-2 py-0.5 rounded-full">{categoryProducts.length}</span>
-                        </h3>
-                        <div className="h-px flex-1 bg-gray-200 dark:bg-gray-800 group-hover:bg-primary-100 transition-colors"></div>
-                    </div>
-
-                    {!isCollapsed && (
-                        <div>
-                        {viewMode === 'grid' ? (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-6 p-1 animate-fade-in">
-                            {categoryProducts.map((p, index) => {
-                            const margin = p.sellPrice > 0 ? ((p.sellPrice - p.buyPrice) / p.sellPrice * 100).toFixed(0) : '0';
-                            const isLowStock = p.stock < 5;
-                            const expiryStatus = getExpiryStatus(p.expiryDate);
-
-                            return (
-                                <div 
-                                key={p.id}
-                                className={`group bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 shadow-[0_4px_12px_rgba(0,0,0,0.08)] hover:shadow-xl hover:-translate-y-1 transition-all duration-300 overflow-hidden flex flex-col`}
-                                >
-                                <div className="relative aspect-[4/3] overflow-hidden bg-gray-50 dark:bg-gray-800">
-                                    <img src={p.image} alt={p.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
-                                    
-                                    <div className="absolute top-3 right-3 flex flex-col gap-2 items-end">
-                                        <span className={`px-2.5 py-1 rounded-lg text-xs font-bold backdrop-blur-md shadow-sm ${isLowStock ? 'bg-red-500/90 text-white' : 'bg-white/90 text-gray-800 dark:bg-black/70 dark:text-white'}`}>
-                                            {p.stock} {p.measurementUnit || 'pcs'}
-                                        </span>
-                                    </div>
-                                    
-                                    {expiryStatus && (
-                                        <div className={`absolute top-3 left-3 px-2 py-1 rounded-lg text-xs font-bold backdrop-blur-md shadow-sm flex items-center gap-1 ${expiryStatus.color} text-white`}>
-                                            {expiryStatus.urgent && <AlertTriangle className="w-3 h-3" />}
-                                            {expiryStatus.text}
-                                        </div>
-                                    )}
-
-                                    <div className="absolute bottom-0 left-0 right-0 p-3 bg-gradient-to-t from-black/80 to-transparent">
-                                    <p className="text-white text-xs font-medium opacity-90">{p.category}</p>
-                                    </div>
-                                </div>
-                                
-                                <div className="p-5 flex flex-col flex-1">
-                                    <h3 className="font-bold text-gray-900 dark:text-white text-lg mb-1 leading-tight">{p.name}</h3>
-                                    <div className="flex items-center gap-2 mb-4">
-                                    <span className="text-2xl font-black text-primary-600 dark:text-primary-400">
-                                        <span className="text-sm font-normal text-gray-500 dark:text-gray-400 mr-1">{storeProfile.currency}</span>{p.sellPrice}
-                                        <span className="text-xs text-gray-400 font-normal ml-1">/ {p.measurementUnit || 'pc'}</span>
-                                    </span>
-                                    </div>
-
-                                    <div className="mt-auto grid grid-cols-2 gap-3 text-sm border-t border-gray-100 dark:border-gray-800 pt-4">
-                                    <div>
-                                        <p className="text-gray-500 text-xs">Buying Price</p>
-                                        <p className="font-semibold dark:text-gray-300">{p.buyPrice}</p>
-                                    </div>
-                                    <div className="text-right">
-                                        <p className="text-gray-500 text-xs">Margin</p>
-                                        <p className="font-semibold text-green-600">{margin}%</p>
-                                    </div>
-                                    </div>
-
-                                    <div className="flex gap-2 mt-4 pt-2">
-                                    <button onClick={() => openQuickStock(p.id)} className="px-3 py-2 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors" title="Add Stock">
-                                        <Layers className="w-4 h-4" />
-                                    </button>
-                                    <button onClick={() => handleEdit(p)} className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg bg-gray-50 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors font-medium text-sm">
-                                        <Edit2 className="w-4 h-4" /> Edit
-                                    </button>
-                                    <button onClick={() => onDeleteProduct(p.id)} className="flex items-center justify-center px-3 rounded-lg bg-red-50 dark:bg-red-900/20 text-red-600 hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors">
-                                        <Trash2 className="w-4 h-4" />
-                                    </button>
-                                    </div>
-                                </div>
-                                </div>
-                            );
-                            })}
-                        </div>
-                        ) : (
-                        <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-800 overflow-hidden animate-fade-in">
-                            <div className="overflow-x-auto">
-                            <table className="w-full text-left border-collapse">
-                                <thead className="bg-gray-50 dark:bg-black text-gray-500 dark:text-gray-400 text-sm">
-                                <tr>
-                                    <th className="p-4">Product</th>
-                                    <th className="p-4">Category</th>
-                                    <th className="p-4">Stock</th>
-                                    <th className="p-4">Expiry</th>
-                                    <th className="p-4">Cost</th>
-                                    <th className="p-4">Price / Unit</th>
-                                    <th className="p-4 text-right">Actions</th>
-                                </tr>
-                                </thead>
-                                <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
-                                {categoryProducts.map((p, index) => {
-                                    const expiryStatus = getExpiryStatus(p.expiryDate);
-                                    return (
-                                    <tr 
-                                        key={p.id} 
-                                        className="hover:bg-gray-50 dark:hover:bg-gray-800/30 transition-colors"
-                                    >
-                                        <td className="p-4 flex items-center gap-4">
-                                        <img src={p.image} alt="" className="w-12 h-12 rounded-lg object-cover bg-gray-100 dark:bg-gray-800 shadow-sm" />
-                                        <span className="font-bold text-gray-900 dark:text-white">{p.name}</span>
-                                        </td>
-                                        <td className="p-4 text-gray-600 dark:text-gray-400 font-medium">{p.category}</td>
-                                        <td className="p-4">
-                                        <span className={`px-2.5 py-1 rounded-md text-xs font-bold ${p.stock < 5 ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'}`}>
-                                            {p.stock} {p.measurementUnit || 'pcs'}
-                                        </span>
-                                        </td>
-                                        <td className="p-4">
-                                            {expiryStatus ? (
-                                                <span className={`px-2.5 py-1 rounded-md text-xs font-bold ${expiryStatus.urgent ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' : 'text-gray-600 dark:text-gray-400'}`}>
-                                                    {expiryStatus.text}
-                                                </span>
-                                            ) : (
-                                                <span className="text-gray-400">-</span>
-                                            )}
-                                        </td>
-                                        <td className="p-4 text-gray-600 dark:text-gray-400">{storeProfile.currency} {p.buyPrice}</td>
-                                        <td className="p-4 font-bold text-gray-900 dark:text-white">{storeProfile.currency} {p.sellPrice} <span className="text-xs font-normal text-gray-500">/{p.measurementUnit || 'pc'}</span></td>
-                                        <td className="p-4 text-right">
-                                        <div className="flex justify-end gap-2">
-                                            <button onClick={() => openQuickStock(p.id)} className="p-2 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 rounded-lg transition-colors" title="Add Stock">
-                                                <Layers className="w-4 h-4" />
-                                            </button>
-                                            <button onClick={() => handleEdit(p)} className="p-2 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg transition-colors">
-                                            <Edit2 className="w-4 h-4" />
-                                            </button>
-                                            <button onClick={() => onDeleteProduct(p.id)} className="p-2 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg transition-colors">
-                                            <Trash2 className="w-4 h-4" />
-                                            </button>
-                                        </div>
-                                        </td>
-                                    </tr>
-                                    );
-                                })}
-                                </tbody>
-                            </table>
-                            </div>
-                        </div>
-                        )}
-                        </div>
-                    )}
+      <DragDropContext onDragEnd={handleDragEnd}>
+        <Droppable droppableId="categories" type="category">
+          {(provided) => (
+            <div ref={provided.innerRef} {...provided.droppableProps} className="flex-1 overflow-y-auto space-y-8 pb-10">
+              {processedProducts.length === 0 && (
+                <div className="p-12 text-center text-gray-500 dark:text-gray-400 bg-white dark:bg-gray-900 rounded-2xl border border-dashed border-gray-300 dark:border-gray-700 mt-4">
+                  <Package className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                  <h3 className="text-lg font-bold mb-1">No products found</h3>
+                  <p>Try adjusting your search, add a new product, or import a CSV file.</p>
                 </div>
-            )
-        })}
+              )}
 
-      </div>
+              {categories.map((category, index) => {
+                  const categoryProducts = sortProducts(processedProducts.filter(p => p.category === category));
+                  if (categoryProducts.length === 0) return null;
+                  const isCollapsed = collapsedCategories[category];
+
+                  return (
+                    <Draggable key={category} draggableId={category} index={index} isDragDisabled={sortBy !== 'custom'}>
+                      {(provided) => (
+                        <div ref={provided.innerRef} {...provided.draggableProps} className="space-y-4">
+                            <div 
+                                className="flex items-center gap-2 group select-none"
+                            >
+                                <div {...provided.dragHandleProps} className={`p-1 rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors ${sortBy !== 'custom' ? 'opacity-50 cursor-not-allowed' : 'cursor-grab active:cursor-grabbing'}`}>
+                                  <GripVertical className="w-4 h-4" />
+                                </div>
+                                <div 
+                                  onClick={() => toggleCategory(category)}
+                                  className="p-1 rounded-md bg-gray-100 dark:bg-gray-800 text-gray-500 group-hover:text-primary-600 transition-colors cursor-pointer"
+                                >
+                                    {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                                </div>
+                                <h3 className="text-lg font-bold text-gray-800 dark:text-white group-hover:text-primary-600 transition-colors flex items-center gap-2 cursor-pointer" onClick={() => toggleCategory(category)}>
+                                    {category}
+                                    <span className="text-xs font-normal bg-gray-100 dark:bg-gray-800 text-gray-500 px-2 py-0.5 rounded-full">{categoryProducts.length}</span>
+                                </h3>
+                                <div className="h-px flex-1 bg-gray-200 dark:bg-gray-800 group-hover:bg-primary-100 transition-colors"></div>
+                            </div>
+
+                            {!isCollapsed && (
+                                <Droppable droppableId={category} type="product" direction={viewMode === 'grid' ? 'horizontal' : 'vertical'}>
+                                  {(provided) => (
+                                    <div ref={provided.innerRef} {...provided.droppableProps}>
+                                    {viewMode === 'grid' ? (
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-6 p-1 animate-fade-in">
+                                        {categoryProducts.map((p, pIndex) => {
+                                        const margin = p.sellPrice > 0 ? ((p.sellPrice - p.buyPrice) / p.sellPrice * 100).toFixed(0) : '0';
+                                        const isLowStock = p.stock < 5;
+                                        const expiryStatus = getExpiryStatus(p.expiryDate);
+
+                                        return (
+                                          <Draggable key={p.id} draggableId={p.id} index={pIndex} isDragDisabled={sortBy !== 'custom'}>
+                                            {(provided) => (
+                                              <div 
+                                              ref={provided.innerRef}
+                                              {...provided.draggableProps}
+                                              className={`group bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 shadow-[0_4px_12px_rgba(0,0,0,0.08)] hover:shadow-xl hover:-translate-y-1 transition-all duration-300 overflow-hidden flex flex-col`}
+                                              >
+                                              <div className="relative aspect-[4/3] overflow-hidden bg-gray-50 dark:bg-gray-800">
+                                                  <div {...provided.dragHandleProps} className={`absolute top-3 left-3 z-10 p-1.5 rounded-lg bg-white/80 dark:bg-black/50 backdrop-blur-md text-gray-600 dark:text-gray-300 shadow-sm ${sortBy !== 'custom' ? 'opacity-0' : 'opacity-0 group-hover:opacity-100 cursor-grab active:cursor-grabbing'} transition-opacity`}>
+                                                    <GripVertical className="w-4 h-4" />
+                                                  </div>
+                                                  <img src={p.image} alt={p.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
+                                                  
+                                                  <div className="absolute top-3 right-3 flex flex-col gap-2 items-end">
+                                                      <span className={`px-2.5 py-1 rounded-lg text-xs font-bold backdrop-blur-md shadow-sm ${isLowStock ? 'bg-red-500/90 text-white' : 'bg-white/90 text-gray-800 dark:bg-black/70 dark:text-white'}`}>
+                                                          {p.stock} {p.measurementUnit || 'pcs'}
+                                                      </span>
+                                                  </div>
+                                                  
+                                                  {expiryStatus && (
+                                                      <div className={`absolute top-3 left-12 px-2 py-1 rounded-lg text-xs font-bold backdrop-blur-md shadow-sm flex items-center gap-1 ${expiryStatus.color} text-white`}>
+                                                          {expiryStatus.urgent && <AlertTriangle className="w-3 h-3" />}
+                                                          {expiryStatus.text}
+                                                      </div>
+                                                  )}
+
+                                                  <div className="absolute bottom-0 left-0 right-0 p-3 bg-gradient-to-t from-black/80 to-transparent">
+                                                  <p className="text-white text-xs font-medium opacity-90">{p.category}</p>
+                                                  </div>
+                                              </div>
+                                              
+                                              <div className="p-5 flex flex-col flex-1">
+                                                  <h3 className="font-bold text-gray-900 dark:text-white text-lg mb-1 leading-tight">{p.name}</h3>
+                                                  <div className="flex items-center gap-2 mb-4">
+                                                  <span className="text-2xl font-black text-primary-600 dark:text-primary-400">
+                                                      <span className="text-sm font-normal text-gray-500 dark:text-gray-400 mr-1">{storeProfile.currency}</span>{p.sellPrice}
+                                                      <span className="text-xs text-gray-400 font-normal ml-1">/ {p.measurementUnit || 'pc'}</span>
+                                                  </span>
+                                                  </div>
+
+                                                  <div className="mt-auto grid grid-cols-2 gap-3 text-sm border-t border-gray-100 dark:border-gray-800 pt-4">
+                                                  <div>
+                                                      <p className="text-gray-500 text-xs">Buying Price</p>
+                                                      <p className="font-semibold dark:text-gray-300">{p.buyPrice}</p>
+                                                  </div>
+                                                  <div className="text-right">
+                                                      <p className="text-gray-500 text-xs">Margin</p>
+                                                      <p className="font-semibold text-green-600">{margin}%</p>
+                                                  </div>
+                                                  </div>
+
+                                                  <div className="flex gap-2 mt-4 pt-2">
+                                                  <button onClick={() => openQuickStock(p.id)} className="px-3 py-2 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors" title="Add Stock">
+                                                      <Layers className="w-4 h-4" />
+                                                  </button>
+                                                  <button onClick={() => handleEdit(p)} className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg bg-gray-50 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors font-medium text-sm">
+                                                      <Edit2 className="w-4 h-4" /> Edit
+                                                  </button>
+                                                  <button onClick={() => onDeleteProduct(p.id)} className="flex items-center justify-center px-3 rounded-lg bg-red-50 dark:bg-red-900/20 text-red-600 hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors">
+                                                      <Trash2 className="w-4 h-4" />
+                                                  </button>
+                                                  </div>
+                                              </div>
+                                              </div>
+                                            )}
+                                          </Draggable>
+                                        );
+                                        })}
+                                        {provided.placeholder}
+                                    </div>
+                                    ) : (
+                                    <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-800 overflow-hidden animate-fade-in">
+                                        <div className="overflow-x-auto">
+                                        <table className="w-full text-left border-collapse">
+                                            <thead className="bg-gray-50 dark:bg-black text-gray-500 dark:text-gray-400 text-sm">
+                                            <tr>
+                                                <th className="p-4 w-10"></th>
+                                                <th className="p-4">Product</th>
+                                                <th className="p-4">Category</th>
+                                                <th className="p-4">Stock</th>
+                                                <th className="p-4">Expiry</th>
+                                                <th className="p-4">Cost</th>
+                                                <th className="p-4">Price / Unit</th>
+                                                <th className="p-4 text-right">Actions</th>
+                                            </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                                            {categoryProducts.map((p, pIndex) => {
+                                                const expiryStatus = getExpiryStatus(p.expiryDate);
+                                                return (
+                                                  <Draggable key={p.id} draggableId={p.id} index={pIndex} isDragDisabled={sortBy !== 'custom'}>
+                                                    {(provided) => (
+                                                      <tr 
+                                                          ref={provided.innerRef}
+                                                          {...provided.draggableProps}
+                                                          className="hover:bg-gray-50 dark:hover:bg-gray-800/30 transition-colors bg-white dark:bg-gray-900"
+                                                      >
+                                                          <td className="p-4">
+                                                              <div {...provided.dragHandleProps} className={`text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors ${sortBy !== 'custom' ? 'opacity-50 cursor-not-allowed' : 'cursor-grab active:cursor-grabbing'}`}>
+                                                                  <GripVertical className="w-4 h-4" />
+                                                              </div>
+                                                          </td>
+                                                          <td className="p-4 flex items-center gap-4">
+                                                          <img src={p.image} alt="" className="w-12 h-12 rounded-lg object-cover bg-gray-100 dark:bg-gray-800 shadow-sm" />
+                                                          <span className="font-bold text-gray-900 dark:text-white">{p.name}</span>
+                                                          </td>
+                                                          <td className="p-4 text-gray-600 dark:text-gray-400 font-medium">{p.category}</td>
+                                                          <td className="p-4">
+                                                          <span className={`px-2.5 py-1 rounded-md text-xs font-bold ${p.stock < 5 ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'}`}>
+                                                              {p.stock} {p.measurementUnit || 'pcs'}
+                                                          </span>
+                                                          </td>
+                                                          <td className="p-4">
+                                                              {expiryStatus ? (
+                                                                  <span className={`px-2.5 py-1 rounded-md text-xs font-bold ${expiryStatus.urgent ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' : 'text-gray-600 dark:text-gray-400'}`}>
+                                                                      {expiryStatus.text}
+                                                                  </span>
+                                                              ) : (
+                                                                  <span className="text-gray-400">-</span>
+                                                              )}
+                                                          </td>
+                                                          <td className="p-4 text-gray-600 dark:text-gray-400">{storeProfile.currency} {p.buyPrice}</td>
+                                                          <td className="p-4 font-bold text-gray-900 dark:text-white">{storeProfile.currency} {p.sellPrice} <span className="text-xs font-normal text-gray-500">/{p.measurementUnit || 'pc'}</span></td>
+                                                          <td className="p-4 text-right">
+                                                          <div className="flex justify-end gap-2">
+                                                              <button onClick={() => openQuickStock(p.id)} className="p-2 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 rounded-lg transition-colors" title="Add Stock">
+                                                                  <Layers className="w-4 h-4" />
+                                                              </button>
+                                                              <button onClick={() => handleEdit(p)} className="p-2 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg transition-colors">
+                                                              <Edit2 className="w-4 h-4" />
+                                                              </button>
+                                                              <button onClick={() => onDeleteProduct(p.id)} className="p-2 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg transition-colors">
+                                                              <Trash2 className="w-4 h-4" />
+                                                              </button>
+                                                          </div>
+                                                          </td>
+                                                      </tr>
+                                                    )}
+                                                  </Draggable>
+                                                );
+                                            })}
+                                            {provided.placeholder}
+                                            </tbody>
+                                        </table>
+                                        </div>
+                                    </div>
+                                    )}
+                                    </div>
+                                  )}
+                                </Droppable>
+                            )}
+                        </div>
+                      )}
+                    </Draggable>
+                  );
+              })}
+              {provided.placeholder}
+            </div>
+          )}
+        </Droppable>
+      </DragDropContext>
 
       {/* Quick Add Stock Modal */}
       {isStockModalOpen && (

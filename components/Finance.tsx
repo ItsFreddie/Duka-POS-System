@@ -4,7 +4,7 @@ import { Clock, CheckCircle, XCircle, AlertTriangle, FileText, Banknote, CreditC
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import html2canvas from 'html2canvas';
-import { getStockLogs } from '../utils/db';
+import { getStockLogs, getAllShifts } from '../utils/db';
 
 // Utility Safe ID (Duplicate for safety/isolation)
 const generateId = () => Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
@@ -21,11 +21,13 @@ interface FinanceProps {
   onUpdateShift: (cash: number, mpesa: number) => void;
   onPayDebt: (transactionId: string, method: 'Cash' | 'M-Pesa') => void;
   onRefund: (transaction: Transaction) => void;
+  onRecordExpense: (amount: number, reason: string, source: 'Cash' | 'M-Pesa', category?: string) => void;
+  onSetDueDate?: (transactionId: string, dueDate: string) => void;
   storeProfile: StoreProfile;
 }
 
-export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers, onAddCustomer, onDeleteCustomer, onCustomerDeposit, onOpenShift, onCloseShift, onUpdateShift, onPayDebt, onRefund, storeProfile }) => {
-  const [activeTab, setActiveTab] = useState<'shift' | 'receipts' | 'debts'>('shift');
+export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers, onAddCustomer, onDeleteCustomer, onCustomerDeposit, onOpenShift, onCloseShift, onUpdateShift, onPayDebt, onRefund, onRecordExpense, onSetDueDate, storeProfile }) => {
+  const [activeTab, setActiveTab] = useState<'shift' | 'receipts' | 'debts' | 'expenses'>('shift');
   const [openingCash, setOpeningCash] = useState('');
   const [openingMpesa, setOpeningMpesa] = useState('');
   const [closingCash, setClosingCash] = useState('');
@@ -56,6 +58,24 @@ export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers
   // Receipt Viewer State
   const [selectedReceipt, setSelectedReceipt] = useState<Transaction | null>(null);
   const receiptRef = useRef<HTMLDivElement>(null);
+
+  // All Shifts State for Expenses
+  const [allShifts, setAllShifts] = useState<ShiftRecord[]>([]);
+  const [isAddExpenseOpen, setIsAddExpenseOpen] = useState(false);
+  const [expenseAmount, setExpenseAmount] = useState('');
+  const [expenseReason, setExpenseReason] = useState('');
+  const [expenseCategory, setExpenseCategory] = useState('Supplies');
+  const [expenseSource, setExpenseSource] = useState<'Cash' | 'M-Pesa'>('Cash');
+
+  const expenseCategories = ['Supplies', 'Rent', 'Utilities', 'Transport', 'Salaries', 'Other'];
+
+  useEffect(() => {
+    const loadShifts = async () => {
+      const shifts = await getAllShifts();
+      setAllShifts(shifts);
+    };
+    loadShifts();
+  }, [shift]);
 
   // Sync inputs with shift data if it exists
   useEffect(() => {
@@ -183,6 +203,19 @@ export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers
           setDepositAmount('');
           setDepositMethod('Cash');
           alert("Deposit successful!");
+      }
+  };
+
+  const handleAddExpenseSubmit = (e: React.FormEvent) => {
+      e.preventDefault();
+      if (expenseAmount && expenseReason) {
+          onRecordExpense(Number(expenseAmount), expenseReason, expenseSource, expenseCategory);
+          setIsAddExpenseOpen(false);
+          setExpenseAmount('');
+          setExpenseReason('');
+          setExpenseCategory('Supplies');
+          setExpenseSource('Cash');
+          alert("Expense recorded successfully!");
       }
   };
 
@@ -396,6 +429,13 @@ export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers
             >
             Debts <span className="ml-1 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 text-xs px-2 py-0.5 rounded-full">{customers.filter(c => c.totalDebt > 0).length}</span>
             {activeTab === 'debts' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-primary-600 rounded-t-full"></div>}
+            </button>
+            <button
+            onClick={() => setActiveTab('expenses')}
+            className={`pb-2 px-1 font-medium text-sm transition-colors relative ${activeTab === 'expenses' ? 'text-primary-600 dark:text-primary-400' : 'text-gray-500 dark:text-gray-400'}`}
+            >
+            Expenses
+            {activeTab === 'expenses' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-primary-600 rounded-t-full"></div>}
             </button>
         </div>
         
@@ -698,9 +738,44 @@ export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers
                         </div>
                       </td>
                       <td className="p-4">
-                        <span className={`px-2.5 py-1 rounded-lg text-xs font-bold ${t.status === 'Completed' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'}`}>
-                          {t.status}
-                        </span>
+                        <div className="flex flex-col items-start gap-1">
+                            <span className={`px-2.5 py-1 rounded-lg text-xs font-bold ${t.status === 'Completed' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'}`}>
+                              {t.status}
+                            </span>
+                            {t.status === 'Pending Debt' && (
+                                <span className="text-[10px] text-red-500 font-medium whitespace-nowrap">
+                                    {(() => {
+                                        const now = new Date();
+                                        now.setHours(0, 0, 0, 0);
+                                        
+                                        if (t.dueDate) {
+                                            const [year, month, day] = t.dueDate.split('-').map(Number);
+                                            const dueDate = new Date(year, month - 1, day);
+                                            dueDate.setHours(0, 0, 0, 0);
+                                            const diffTime = now.getTime() - dueDate.getTime();
+                                            const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+                                            
+                                            if (diffDays > 0) {
+                                                return diffDays === 1 ? '1 day past due' : `${diffDays} days past due`;
+                                            } else if (diffDays === 0) {
+                                                return 'Due today';
+                                            } else {
+                                                const absDays = Math.abs(diffDays);
+                                                return absDays === 1 ? 'Due tomorrow' : `Due in ${absDays} days`;
+                                            }
+                                        } else {
+                                            const txDate = new Date(t.date);
+                                            txDate.setHours(0, 0, 0, 0);
+                                            const diffTime = now.getTime() - txDate.getTime();
+                                            const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+                                            if (diffDays === 0) return 'Outstanding today';
+                                            if (diffDays === 1) return 'Outstanding 1 day';
+                                            return `Outstanding ${diffDays} days`;
+                                        }
+                                    })()}
+                                </span>
+                            )}
+                        </div>
                       </td>
                       <td className="p-4 text-right">
                          {t.status === 'Completed' && (
@@ -807,58 +882,120 @@ export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers
                                 </tr>
                                 {expandedCustomerId === c.id && (
                                     <tr className="bg-gray-50/50 dark:bg-black/30">
-                                        <td colSpan={5} className="p-6">
+                                        <td colSpan={6} className="p-6">
                                             <div className="pl-2">
-                                                <h4 className="text-xs font-black uppercase text-gray-400 mb-4 tracking-widest flex items-center gap-2">
-                                                    <FileText className="w-4 h-4" /> Unpaid Transactions
-                                                </h4>
-                                                {transactions.filter(t => t.customerId === c.id && t.status === 'Pending Debt').length === 0 ? (
+                                                <div className="flex items-center justify-between mb-4">
+                                                    <h4 className="text-xs font-black uppercase text-gray-400 tracking-widest flex items-center gap-2">
+                                                        <History className="w-4 h-4" /> Transaction History
+                                                    </h4>
+                                                </div>
+                                                
+                                                {transactions.filter(t => t.customerId === c.id).length === 0 ? (
                                                     <div className="text-sm text-gray-400 italic flex items-center gap-2">
-                                                        <CheckCircle className="w-4 h-4" /> No pending transactions for this customer.
+                                                        <CheckCircle className="w-4 h-4" /> No transactions found for this customer.
                                                     </div>
                                                 ) : (
-                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                                        {transactions.filter(t => t.customerId === c.id && t.status === 'Pending Debt').map(t => (
-                                                            <div key={t.id} className="bg-white dark:bg-gray-800 p-5 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-[0_4px_12px_rgba(0,0,0,0.08)] hover:-translate-y-1 transition-all duration-300">
-                                                                <div className="flex justify-between items-start mb-3 border-b border-gray-100 dark:border-gray-700 pb-3">
-                                                                    <div>
-                                                                        <p className="font-bold text-gray-900 dark:text-white">{new Date(t.date).toLocaleDateString()}</p>
-                                                                        <p className="text-xs text-gray-500 font-medium">{new Date(t.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</p>
-                                                                    </div>
-                                                                    <div className="text-right">
-                                                                        <p className="text-[10px] text-gray-500 uppercase font-bold tracking-wider">Due Amount</p>
-                                                                        <p className="text-xl font-black text-red-600 dark:text-red-400">{storeProfile.currency} {(t.total - (t.amountPaid || 0)).toLocaleString()}</p>
-                                                                    </div>
-                                                                </div>
-                                                                
-                                                                <div className="mb-4">
-                                                                    <div className="flex justify-between items-center mb-2">
-                                                                       <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Items ({t.items.length})</p>
-                                                                    </div>
-                                                                    <div className="text-sm text-gray-700 dark:text-gray-300 space-y-1.5 max-h-32 overflow-y-auto pr-2 custom-scrollbar">
-                                                                        {t.items.map((item, idx) => (
-                                                                            <div key={idx} className="flex justify-between border-b border-dashed border-gray-100 dark:border-gray-700 pb-1 last:border-0 last:pb-0">
-                                                                                <span className="truncate pr-2 font-medium">{item.quantity} x {item.name}</span>
-                                                                                <span className="text-gray-500 font-medium whitespace-nowrap">{item.price * item.quantity}</span>
+                                                    <div className="overflow-x-auto rounded-xl border border-gray-200 dark:border-gray-700">
+                                                        <table className="w-full text-left text-sm">
+                                                            <thead className="bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300">
+                                                                <tr>
+                                                                    <th className="p-3 font-bold">Date</th>
+                                                                    <th className="p-3 font-bold">Items</th>
+                                                                    <th className="p-3 font-bold">Total</th>
+                                                                    <th className="p-3 font-bold">Paid</th>
+                                                                    <th className="p-3 font-bold">Status</th>
+                                                                    <th className="p-3 font-bold">Due Date</th>
+                                                                    <th className="p-3 font-bold text-right">Action</th>
+                                                                </tr>
+                                                            </thead>
+                                                            <tbody className="divide-y divide-gray-100 dark:divide-gray-800 bg-white dark:bg-gray-900">
+                                                                {transactions.filter(t => t.customerId === c.id).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map(t => (
+                                                                    <tr key={t.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
+                                                                        <td className="p-3 text-gray-600 dark:text-gray-400">
+                                                                            <div className="font-medium">{new Date(t.date).toLocaleDateString()}</div>
+                                                                            <div className="text-xs">{new Date(t.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div>
+                                                                        </td>
+                                                                        <td className="p-3">
+                                                                            <div className="text-gray-900 dark:text-white font-medium line-clamp-1 max-w-[200px]" title={t.items.map(i => `${i.quantity}x ${i.name}`).join(', ')}>
+                                                                                {t.items.map(i => `${i.quantity}x ${i.name}`).join(', ')}
                                                                             </div>
-                                                                        ))}
-                                                                    </div>
-                                                                </div>
-
-                                                                <div className="flex items-center justify-between pt-4 border-t border-gray-100 dark:border-gray-700 bg-gray-50/50 dark:bg-black/20 -mx-5 -mb-5 px-5 py-4 rounded-b-2xl">
-                                                                    <div className="text-xs text-gray-500 font-medium flex flex-col gap-0.5">
-                                                                        <span>Total Bill: {t.total.toLocaleString()}</span>
-                                                                        <span className="text-green-600 dark:text-green-400 font-bold">Paid: {t.amountPaid.toLocaleString()}</span>
-                                                                    </div>
-                                                                    <button 
-                                                                        onClick={(e) => { e.stopPropagation(); handlePayDebtClick(t); }}
-                                                                        className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl transition-all text-xs font-bold shadow-lg shadow-emerald-900/20 flex items-center gap-1.5 transform active:scale-95"
-                                                                    >
-                                                                        <CheckCircle className="w-3.5 h-3.5" /> Settle Debt
-                                                                    </button>
-                                                                </div>
-                                                            </div>
-                                                        ))}
+                                                                        </td>
+                                                                        <td className="p-3 font-bold text-gray-900 dark:text-white">
+                                                                            {storeProfile.currency} {t.total.toLocaleString()}
+                                                                        </td>
+                                                                        <td className="p-3 font-bold text-green-600 dark:text-green-400">
+                                                                            {storeProfile.currency} {(t.amountPaid || 0).toLocaleString()}
+                                                                        </td>
+                                                                        <td className="p-3">
+                                                                            <div className="flex flex-col items-start gap-1">
+                                                                                <span className={`px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider ${
+                                                                                    t.status === 'Completed' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' :
+                                                                                    t.status === 'Pending Debt' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' :
+                                                                                    'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400'
+                                                                                }`}>
+                                                                                    {t.status}
+                                                                                </span>
+                                                                                {t.status === 'Pending Debt' && (
+                                                                                    <span className="text-[10px] text-red-500 font-medium whitespace-nowrap">
+                                                                                        {(() => {
+                                                                                            const now = new Date();
+                                                                                            now.setHours(0, 0, 0, 0);
+                                                                                            
+                                                                                            if (t.dueDate) {
+                                                                                                const [year, month, day] = t.dueDate.split('-').map(Number);
+                                                                                                const dueDate = new Date(year, month - 1, day);
+                                                                                                dueDate.setHours(0, 0, 0, 0);
+                                                                                                const diffTime = now.getTime() - dueDate.getTime();
+                                                                                                const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+                                                                                                
+                                                                                                if (diffDays > 0) {
+                                                                                                    return diffDays === 1 ? '1 day past due' : `${diffDays} days past due`;
+                                                                                                } else if (diffDays === 0) {
+                                                                                                    return 'Due today';
+                                                                                                } else {
+                                                                                                    const absDays = Math.abs(diffDays);
+                                                                                                    return absDays === 1 ? 'Due tomorrow' : `Due in ${absDays} days`;
+                                                                                                }
+                                                                                            } else {
+                                                                                                const txDate = new Date(t.date);
+                                                                                                txDate.setHours(0, 0, 0, 0);
+                                                                                                const diffTime = now.getTime() - txDate.getTime();
+                                                                                                const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+                                                                                                if (diffDays === 0) return 'Outstanding today';
+                                                                                                if (diffDays === 1) return 'Outstanding 1 day';
+                                                                                                return `Outstanding ${diffDays} days`;
+                                                                                            }
+                                                                                        })()}
+                                                                                    </span>
+                                                                                )}
+                                                                            </div>
+                                                                        </td>
+                                                                        <td className="p-3">
+                                                                            {t.status === 'Pending Debt' ? (
+                                                                                <input 
+                                                                                    type="date" 
+                                                                                    value={t.dueDate || ''}
+                                                                                    onChange={(e) => onSetDueDate && onSetDueDate(t.id, e.target.value)}
+                                                                                    className="px-2 py-1 text-xs border border-gray-200 dark:border-gray-700 rounded-md bg-white dark:bg-black dark:text-white outline-none focus:ring-1 focus:ring-primary-500"
+                                                                                />
+                                                                            ) : (
+                                                                                <span className="text-gray-400 text-xs">-</span>
+                                                                            )}
+                                                                        </td>
+                                                                        <td className="p-3 text-right">
+                                                                            {t.status === 'Pending Debt' && (
+                                                                                <button 
+                                                                                    onClick={(e) => { e.stopPropagation(); handlePayDebtClick(t); }}
+                                                                                    className="px-3 py-1.5 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 dark:bg-emerald-900/20 dark:text-emerald-400 dark:hover:bg-emerald-900/40 rounded-lg transition-colors text-xs font-bold border border-emerald-200 dark:border-emerald-800/50"
+                                                                                >
+                                                                                    Settle
+                                                                                </button>
+                                                                            )}
+                                                                        </td>
+                                                                    </tr>
+                                                                ))}
+                                                            </tbody>
+                                                        </table>
                                                     </div>
                                                 )}
                                             </div>
@@ -883,6 +1020,70 @@ export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers
                     </div>
                 </div>
             )}
+        </div>
+      )}
+
+      {/* EXPENSES TAB */}
+      {activeTab === 'expenses' && (
+        <div className="animate-fade-in space-y-6">
+            <div className="flex justify-between items-center">
+                <h3 className="text-xl font-black text-gray-900 dark:text-white flex items-center gap-2">
+                    <Banknote className="w-6 h-6 text-red-500" /> Expenses Management
+                </h3>
+                <button 
+                    onClick={() => setIsAddExpenseOpen(true)}
+                    className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold transition-colors shadow-sm"
+                >
+                    <Plus className="w-4 h-4" /> Add Expense
+                </button>
+            </div>
+
+            <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-800 overflow-hidden">
+                <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm">
+                        <thead className="bg-gray-50 dark:bg-gray-800/50 text-gray-500 dark:text-gray-400 font-bold uppercase tracking-wider text-[10px]">
+                            <tr>
+                                <th className="p-4">Date</th>
+                                <th className="p-4">Category</th>
+                                <th className="p-4">Reason</th>
+                                <th className="p-4">Source</th>
+                                <th className="p-4 text-right">Amount</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                            {allShifts.flatMap(s => s.expenses).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map(exp => (
+                                <tr key={exp.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
+                                    <td className="p-4 text-gray-600 dark:text-gray-400">
+                                        <div className="font-medium">{new Date(exp.date).toLocaleDateString()}</div>
+                                        <div className="text-xs">{new Date(exp.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div>
+                                    </td>
+                                    <td className="p-4">
+                                        <span className="px-2 py-1 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded-md text-xs font-bold uppercase tracking-wider">
+                                            {exp.category || 'Uncategorized'}
+                                        </span>
+                                    </td>
+                                    <td className="p-4 font-medium text-gray-900 dark:text-white">{exp.reason}</td>
+                                    <td className="p-4">
+                                        <span className={`px-2 py-1 rounded-md text-xs font-bold uppercase tracking-wider ${exp.source === 'Cash' ? 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300' : 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'}`}>
+                                            {exp.source || 'Cash'}
+                                        </span>
+                                    </td>
+                                    <td className="p-4 text-right font-black text-red-600 dark:text-red-400">
+                                        {storeProfile.currency} {exp.amount.toLocaleString()}
+                                    </td>
+                                </tr>
+                            ))}
+                            {allShifts.flatMap(s => s.expenses).length === 0 && (
+                                <tr>
+                                    <td colSpan={5} className="p-8 text-center text-gray-500 dark:text-gray-400 font-medium">
+                                        No expenses recorded yet.
+                                    </td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
         </div>
       )}
 
@@ -1107,6 +1308,79 @@ export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers
                </button>
             </form>
           </div>
+        </div>
+      )}
+
+      {/* Add Expense Modal */}
+      {isAddExpenseOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md">
+           <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-fade-in border border-gray-200 dark:border-gray-800 transform scale-100">
+             <div className="p-6 border-b border-gray-100 dark:border-gray-800 flex justify-between items-center bg-gray-50 dark:bg-black/50">
+              <h3 className="text-xl font-black text-gray-900 dark:text-white tracking-tight">Record Expense</h3>
+              <button onClick={() => setIsAddExpenseOpen(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors">
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+            <form onSubmit={handleAddExpenseSubmit} className="p-6 space-y-5">
+              <div>
+                <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5 uppercase tracking-wider">Amount</label>
+                <input 
+                  required
+                  type="number"
+                  min="1"
+                  value={expenseAmount}
+                  onChange={e => setExpenseAmount(e.target.value)}
+                  placeholder="0.00"
+                  className="w-full p-3 border border-gray-200 dark:border-gray-700 rounded-xl bg-white dark:bg-black dark:text-white focus:ring-2 focus:ring-red-500 outline-none transition-all font-medium"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5 uppercase tracking-wider">Category</label>
+                <select 
+                  value={expenseCategory}
+                  onChange={e => setExpenseCategory(e.target.value)}
+                  className="w-full p-3 border border-gray-200 dark:border-gray-700 rounded-xl bg-white dark:bg-black dark:text-white focus:ring-2 focus:ring-red-500 outline-none transition-all font-medium"
+                >
+                  {expenseCategories.map(cat => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5 uppercase tracking-wider">Reason / Description</label>
+                <input 
+                  required
+                  type="text"
+                  value={expenseReason}
+                  onChange={e => setExpenseReason(e.target.value)}
+                  placeholder="e.g. Bought pens"
+                  className="w-full p-3 border border-gray-200 dark:border-gray-700 rounded-xl bg-white dark:bg-black dark:text-white focus:ring-2 focus:ring-red-500 outline-none transition-all font-medium"
+                />
+              </div>
+              <div>
+                 <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5 uppercase tracking-wider">Source of Funds</label>
+                 <div className="flex gap-2">
+                    <button
+                        type="button"
+                        onClick={() => setExpenseSource('Cash')}
+                        className={`flex-1 py-3 px-4 rounded-xl font-bold flex items-center justify-center gap-2 border transition-all ${expenseSource === 'Cash' ? 'bg-gray-800 text-white border-transparent' : 'bg-white dark:bg-black border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400'}`}
+                    >
+                        <Banknote className="w-4 h-4" /> Cash
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setExpenseSource('M-Pesa')}
+                        className={`flex-1 py-3 px-4 rounded-xl font-bold flex items-center justify-center gap-2 border transition-all ${expenseSource === 'M-Pesa' ? 'bg-green-600 text-white border-transparent' : 'bg-white dark:bg-black border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400'}`}
+                    >
+                        <CreditCard className="w-4 h-4" /> M-Pesa
+                    </button>
+                 </div>
+              </div>
+              <button type="submit" className="w-full bg-red-600 text-white py-3.5 rounded-xl hover:bg-red-700 font-bold shadow-lg shadow-red-900/20 transform active:scale-95 transition-all">
+                Save Expense
+              </button>
+            </form>
+           </div>
         </div>
       )}
 
