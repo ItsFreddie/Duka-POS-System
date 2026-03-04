@@ -526,7 +526,19 @@ const App = () => {
         setStockLogs(loadedStockLogs);
         
         setCurrentShift(loadedShift);
-        setCustomers(loadedCustomers);
+        
+        // Migration: Recalculate loyalty points based on total spent to fix inconsistencies
+        const migratedCustomers = loadedCustomers.map(c => {
+            const correctPoints = Math.floor((c.totalSpent || 0) / 100);
+            if (c.loyaltyPoints !== correctPoints) {
+                const updated = { ...c, loyaltyPoints: correctPoints };
+                db.saveCustomer(updated); // Update DB in background
+                return updated;
+            }
+            return c;
+        });
+        setCustomers(migratedCustomers);
+        
         setLastClosedShift(loadedLastShift);
         
         if (loadedProfile) {
@@ -593,9 +605,9 @@ const App = () => {
             }
 
             // Handle Loyalty & Total Spent (All methods)
-            const pointsEarned = Math.floor(transaction.total / 100);
-            updatedCustomer.loyaltyPoints = (updatedCustomer.loyaltyPoints || 0) + pointsEarned;
             updatedCustomer.totalSpent = (updatedCustomer.totalSpent || 0) + transaction.total;
+            // Calculate points based on cumulative spend to account for small transactions adding up
+            updatedCustomer.loyaltyPoints = Math.floor(updatedCustomer.totalSpent / 100);
             updatedCustomer.lastTransactionDate = new Date().toISOString();
 
             setCustomers(prev => prev.map(c => c.id === customer.id ? updatedCustomer : c));
