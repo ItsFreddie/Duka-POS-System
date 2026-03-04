@@ -27,7 +27,7 @@ interface FinanceProps {
 }
 
 export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers, onAddCustomer, onDeleteCustomer, onCustomerDeposit, onOpenShift, onCloseShift, onUpdateShift, onPayDebt, onRefund, onRecordExpense, onSetDueDate, storeProfile }) => {
-  const [activeTab, setActiveTab] = useState<'shift' | 'receipts' | 'debts' | 'expenses'>('shift');
+  const [activeTab, setActiveTab] = useState<'shift' | 'receipts' | 'debts' | 'expenses' | 'shiftHistory' | 'loyalty'>('shift');
   const [openingCash, setOpeningCash] = useState('');
   const [openingMpesa, setOpeningMpesa] = useState('');
   const [closingCash, setClosingCash] = useState('');
@@ -66,6 +66,8 @@ export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers
   const [expenseReason, setExpenseReason] = useState('');
   const [expenseCategory, setExpenseCategory] = useState('Supplies');
   const [expenseSource, setExpenseSource] = useState<'Cash' | 'M-Pesa'>('Cash');
+  const [selectedLoyaltyCustomer, setSelectedLoyaltyCustomer] = useState<Customer | null>(null);
+  const [loyaltySortBy, setLoyaltySortBy] = useState<'points' | 'spent' | 'name' | 'visit'>('points');
 
   const expenseCategories = ['Supplies', 'Rent', 'Utilities', 'Transport', 'Salaries', 'Other'];
 
@@ -307,7 +309,7 @@ export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers
 
     doc.setFontSize(12);
     doc.setTextColor(0);
-    doc.text(`Report: ${activeTab === 'shift' ? 'Shift Reconciliation' : activeTab === 'receipts' ? 'Sales Receipts' : 'Customer Debt Accounts'}`, 14, 35);
+    doc.text(`Report: ${activeTab === 'shift' ? 'Shift Reconciliation' : activeTab === 'receipts' ? 'Sales Receipts' : activeTab === 'debts' ? 'Customer Debt Accounts' : activeTab === 'expenses' ? 'Expenses Report' : 'Shift History'}`, 14, 35);
 
     if (activeTab === 'shift') {
         if (!shift) {
@@ -378,6 +380,52 @@ export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers
             theme: 'striped',
             headStyles: { fillColor: [231, 76, 60], textColor: 255 }
         });
+    } else if (activeTab === 'expenses') {
+        autoTable(doc, {
+            startY: 40,
+            head: [['Date', 'Category', 'Reason', 'Source', 'Amount']],
+            body: allShifts.flatMap(s => s.expenses).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map(exp => [
+                new Date(exp.date).toLocaleString(),
+                exp.category || 'Uncategorized',
+                exp.reason,
+                exp.source || 'Cash',
+                `${storeProfile.currency} ${exp.amount}`
+            ]),
+            theme: 'striped',
+            headStyles: { fillColor: [220, 53, 69], textColor: 255 }
+        });
+    } else if (activeTab === 'shiftHistory') {
+        autoTable(doc, {
+            startY: 40,
+            head: [['Date', 'Opened', 'Closed', 'Exp. Cash', 'Act. Cash', 'Exp. M-Pesa', 'Act. M-Pesa', 'Status']],
+            body: allShifts.sort((a,b) => new Date(b.openedAt).getTime() - new Date(a.openedAt).getTime()).map(s => [
+                new Date(s.date).toLocaleDateString(),
+                new Date(s.openedAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
+                s.closedAt ? new Date(s.closedAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '-',
+                `${storeProfile.currency} ${s.closingCashCalculated}`,
+                s.actualClosingCash !== undefined ? `${storeProfile.currency} ${s.actualClosingCash}` : '-',
+                `${storeProfile.currency} ${s.closingMpesaCalculated}`,
+                s.actualClosingMpesa !== undefined ? `${storeProfile.currency} ${s.actualClosingMpesa}` : '-',
+                s.isOpen ? 'Open' : 'Closed'
+            ]),
+            theme: 'striped',
+            headStyles: { fillColor: [142, 68, 173], textColor: 255 },
+            styles: { fontSize: 8 }
+        });
+    } else if (activeTab === 'loyalty') {
+        autoTable(doc, {
+            startY: 40,
+            head: [['Customer', 'Phone', 'Total Spent', 'Points', 'Last Visit']],
+            body: customers.sort((a,b) => (b.loyaltyPoints || 0) - (a.loyaltyPoints || 0)).map(c => [
+                c.name,
+                c.phone || '-',
+                `${storeProfile.currency} ${(c.totalSpent || 0).toLocaleString()}`,
+                (c.loyaltyPoints || 0).toLocaleString(),
+                c.lastTransactionDate ? new Date(c.lastTransactionDate).toLocaleDateString() : '-'
+            ]),
+            theme: 'striped',
+            headStyles: { fillColor: [52, 152, 219], textColor: 255 }
+        });
     }
 
     doc.save(`duka_report_${activeTab}_${new Date().toISOString().split('T')[0]}.pdf`);
@@ -436,6 +484,20 @@ export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers
             >
             Expenses
             {activeTab === 'expenses' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-primary-600 rounded-t-full"></div>}
+            </button>
+            <button
+            onClick={() => setActiveTab('shiftHistory')}
+            className={`pb-2 px-1 font-medium text-sm transition-colors relative ${activeTab === 'shiftHistory' ? 'text-primary-600 dark:text-primary-400' : 'text-gray-500 dark:text-gray-400'}`}
+            >
+            Shift History
+            {activeTab === 'shiftHistory' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-primary-600 rounded-t-full"></div>}
+            </button>
+            <button
+            onClick={() => setActiveTab('loyalty')}
+            className={`pb-2 px-1 font-medium text-sm transition-colors relative ${activeTab === 'loyalty' ? 'text-primary-600 dark:text-primary-400' : 'text-gray-500 dark:text-gray-400'}`}
+            >
+            Loyalty
+            {activeTab === 'loyalty' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-primary-600 rounded-t-full"></div>}
             </button>
         </div>
         
@@ -1087,6 +1149,74 @@ export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers
         </div>
       )}
 
+      {activeTab === 'shiftHistory' && (
+        <div className="animate-fade-in space-y-6">
+            <div className="flex justify-between items-center">
+                <h3 className="text-xl font-black text-gray-900 dark:text-white flex items-center gap-2">
+                    <History className="w-6 h-6 text-primary-500" /> Shift History
+                </h3>
+            </div>
+
+            <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-800 overflow-hidden">
+                <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm">
+                        <thead className="bg-gray-50 dark:bg-gray-800/50 text-gray-500 dark:text-gray-400 font-bold uppercase tracking-wider text-[10px]">
+                            <tr>
+                                <th className="p-4">Date</th>
+                                <th className="p-4">Opened At</th>
+                                <th className="p-4">Closed At</th>
+                                <th className="p-4 text-right">Expected Cash</th>
+                                <th className="p-4 text-right">Actual Cash</th>
+                                <th className="p-4 text-right">Expected M-Pesa</th>
+                                <th className="p-4 text-right">Actual M-Pesa</th>
+                                <th className="p-4 text-center">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                            {allShifts.sort((a,b) => new Date(b.openedAt).getTime() - new Date(a.openedAt).getTime()).map(s => (
+                                <tr key={s.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
+                                    <td className="p-4 text-gray-900 dark:text-white font-medium">
+                                        {new Date(s.date).toLocaleDateString()}
+                                    </td>
+                                    <td className="p-4 text-gray-600 dark:text-gray-400">
+                                        {new Date(s.openedAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                                    </td>
+                                    <td className="p-4 text-gray-600 dark:text-gray-400">
+                                        {s.closedAt ? new Date(s.closedAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '-'}
+                                    </td>
+                                    <td className="p-4 text-right font-medium text-gray-900 dark:text-white">
+                                        {storeProfile.currency} {s.closingCashCalculated.toLocaleString()}
+                                    </td>
+                                    <td className="p-4 text-right font-bold text-gray-900 dark:text-white">
+                                        {s.actualClosingCash !== undefined ? `${storeProfile.currency} ${s.actualClosingCash.toLocaleString()}` : '-'}
+                                    </td>
+                                    <td className="p-4 text-right font-medium text-gray-900 dark:text-white">
+                                        {storeProfile.currency} {s.closingMpesaCalculated.toLocaleString()}
+                                    </td>
+                                    <td className="p-4 text-right font-bold text-gray-900 dark:text-white">
+                                        {s.actualClosingMpesa !== undefined ? `${storeProfile.currency} ${s.actualClosingMpesa.toLocaleString()}` : '-'}
+                                    </td>
+                                    <td className="p-4 text-center">
+                                        <span className={`px-2 py-1 rounded-md text-xs font-bold uppercase tracking-wider ${s.isOpen ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' : 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300'}`}>
+                                            {s.isOpen ? 'Open' : 'Closed'}
+                                        </span>
+                                    </td>
+                                </tr>
+                            ))}
+                            {allShifts.length === 0 && (
+                                <tr>
+                                    <td colSpan={8} className="p-8 text-center text-gray-500 dark:text-gray-400 font-medium">
+                                        No shifts recorded yet.
+                                    </td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+      )}
+
       {/* Pay Debt Modal */}
       {payDebtModal.isOpen && payDebtModal.transaction && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-md">
@@ -1384,6 +1514,167 @@ export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers
         </div>
       )}
 
+      {/* LOYALTY TAB */}
+      {activeTab === 'loyalty' && (
+        <div className="flex-1 bg-white dark:bg-gray-900 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-800 overflow-hidden animate-fade-in flex flex-col min-h-0">
+            <div className="p-6 border-b border-gray-100 dark:border-gray-800 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 shrink-0">
+                 <div className="flex flex-col gap-1">
+                    <h3 className="text-lg font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                        <Target className="w-5 h-5 text-primary-600" /> Customer Loyalty Program
+                    </h3>
+                    <div className="text-sm text-gray-500 font-medium">
+                        1 Point per {storeProfile.currency} 100 spent
+                    </div>
+                 </div>
+                 
+                 <div className="flex items-center gap-2 bg-gray-100 dark:bg-gray-800 p-1 rounded-lg">
+                    <span className="text-xs font-bold text-gray-500 px-2 uppercase">Sort By:</span>
+                    <select 
+                        value={loyaltySortBy}
+                        onChange={(e) => setLoyaltySortBy(e.target.value as any)}
+                        className="bg-white dark:bg-gray-900 border-none text-sm font-medium rounded-md py-1.5 pl-3 pr-8 focus:ring-2 focus:ring-primary-500 cursor-pointer"
+                    >
+                        <option value="points">Points (High-Low)</option>
+                        <option value="spent">Total Spent (High-Low)</option>
+                        <option value="visit">Last Visit (Recent)</option>
+                        <option value="name">Name (A-Z)</option>
+                    </select>
+                 </div>
+            </div>
+            <div className="flex-1 overflow-y-auto">
+                <table className="w-full text-left border-collapse">
+                    <thead className="bg-gray-50 dark:bg-black text-gray-500 dark:text-gray-400 text-sm border-b border-gray-100 dark:border-gray-800 sticky top-0 z-10">
+                        <tr>
+                            <th className="p-4 font-bold">Customer</th>
+                            <th className="p-4 font-bold">Phone</th>
+                            <th className="p-4 font-bold text-right">Total Spent</th>
+                            <th className="p-4 font-bold text-right">Loyalty Points</th>
+                            <th className="p-4 font-bold text-right">Last Visit</th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                        {customers.length === 0 ? (
+                            <tr>
+                                <td colSpan={5} className="p-8 text-center text-gray-400">No customers found. Add customers at checkout to start tracking loyalty.</td>
+                            </tr>
+                        ) : (
+                            customers.sort((a,b) => {
+                                if (loyaltySortBy === 'points') return (b.loyaltyPoints || 0) - (a.loyaltyPoints || 0);
+                                if (loyaltySortBy === 'spent') return (b.totalSpent || 0) - (a.totalSpent || 0);
+                                if (loyaltySortBy === 'name') return a.name.localeCompare(b.name);
+                                if (loyaltySortBy === 'visit') return new Date(b.lastTransactionDate || 0).getTime() - new Date(a.lastTransactionDate || 0).getTime();
+                                return 0;
+                            }).map(c => (
+                                <tr 
+                                    key={c.id} 
+                                    onClick={() => setSelectedLoyaltyCustomer(c)}
+                                    className="hover:bg-gray-50 dark:hover:bg-gray-800/30 transition-colors cursor-pointer"
+                                >
+                                    <td className="p-4 font-bold text-gray-900 dark:text-white">
+                                        <div className="flex items-center gap-2">
+                                            <div className="w-8 h-8 rounded-full bg-primary-100 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 flex items-center justify-center font-bold text-xs">
+                                                {c.name.charAt(0).toUpperCase()}
+                                            </div>
+                                            {c.name}
+                                        </div>
+                                    </td>
+                                    <td className="p-4 text-gray-600 dark:text-gray-400 font-mono text-sm">{c.phone || '-'}</td>
+                                    <td className="p-4 text-right font-mono font-medium text-gray-900 dark:text-white">
+                                        {storeProfile.currency} {(c.totalSpent || 0).toLocaleString()}
+                                    </td>
+                                    <td className="p-4 text-right">
+                                        <span className={`px-2.5 py-1 rounded-lg font-bold text-xs ${
+                                            (c.loyaltyPoints || 0) > 100 
+                                            ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' 
+                                            : 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400'
+                                        }`}>
+                                            {(c.loyaltyPoints || 0).toLocaleString()} pts
+                                        </span>
+                                    </td>
+                                    <td className="p-4 text-right text-sm text-gray-500">
+                                        {c.lastTransactionDate ? new Date(c.lastTransactionDate).toLocaleDateString() : '-'}
+                                    </td>
+                                </tr>
+                            ))
+                        )}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+      )}
+
+      {/* Customer Transaction History Modal */}
+      {selectedLoyaltyCustomer && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in" onClick={() => setSelectedLoyaltyCustomer(null)}>
+            <div className="bg-white dark:bg-gray-900 rounded-3xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+                <div className="p-6 border-b border-gray-100 dark:border-gray-800 flex justify-between items-center bg-gray-50/50 dark:bg-black/20">
+                    <div>
+                        <h3 className="text-xl font-black text-gray-900 dark:text-white">{selectedLoyaltyCustomer.name}</h3>
+                        <p className="text-sm text-gray-500 dark:text-gray-400 font-medium flex items-center gap-2">
+                            <span className="bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300 px-2 py-0.5 rounded text-xs font-bold">
+                                {selectedLoyaltyCustomer.loyaltyPoints || 0} Points
+                            </span>
+                            <span>•</span>
+                            <span>{selectedLoyaltyCustomer.phone || 'No Phone'}</span>
+                        </p>
+                    </div>
+                    <button onClick={() => setSelectedLoyaltyCustomer(null)} className="p-2 hover:bg-gray-200 dark:hover:bg-gray-800 rounded-full transition-colors">
+                        <X className="w-6 h-6 text-gray-500" />
+                    </button>
+                </div>
+                
+                <div className="flex-1 overflow-y-auto p-0">
+                    {transactions.filter(t => t.customerId === selectedLoyaltyCustomer.id).length === 0 ? (
+                        <div className="p-12 text-center text-gray-400 flex flex-col items-center">
+                            <History className="w-12 h-12 mb-3 opacity-50" />
+                            <p>No transaction history found for this customer.</p>
+                        </div>
+                    ) : (
+                        <table className="w-full text-left border-collapse">
+                            <thead className="bg-gray-50 dark:bg-black text-gray-500 dark:text-gray-400 text-xs uppercase tracking-wider border-b border-gray-100 dark:border-gray-800 sticky top-0">
+                                <tr>
+                                    <th className="p-4 font-bold">Date</th>
+                                    <th className="p-4 font-bold">Items</th>
+                                    <th className="p-4 font-bold text-right">Amount</th>
+                                    <th className="p-4 font-bold text-right">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                                {transactions
+                                    .filter(t => t.customerId === selectedLoyaltyCustomer.id)
+                                    .sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                                    .map(t => (
+                                    <tr key={t.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/30">
+                                        <td className="p-4 text-sm text-gray-600 dark:text-gray-400">
+                                            <div className="font-bold text-gray-900 dark:text-white">{new Date(t.date).toLocaleDateString()}</div>
+                                            <div className="text-xs">{new Date(t.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div>
+                                        </td>
+                                        <td className="p-4 text-sm">
+                                            <div className="line-clamp-1 max-w-[200px]" title={t.items.map(i => i.name).join(', ')}>
+                                                {t.items.map(i => `${i.quantity}x ${i.name}`).join(', ')}
+                                            </div>
+                                        </td>
+                                        <td className="p-4 text-right font-mono font-bold text-gray-900 dark:text-white">
+                                            {storeProfile.currency} {t.total.toLocaleString()}
+                                        </td>
+                                        <td className="p-4 text-right">
+                                            <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${
+                                                t.status === 'Completed' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' :
+                                                t.status === 'Refunded' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' :
+                                                'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400'
+                                            }`}>
+                                                {t.status}
+                                            </span>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    )}
+                </div>
+            </div>
+        </div>
+      )}
     </div>
   );
 };

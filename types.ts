@@ -47,8 +47,11 @@ export interface Customer {
   id: string;
   name: string;
   phone?: string;
+  email?: string;
   totalDebt: number;
   creditBalance: number; // Store credit / Prepayment
+  loyaltyPoints: number;
+  totalSpent: number;
   lastTransactionDate?: string;
 }
 
@@ -58,6 +61,7 @@ export interface Transaction {
   items: SaleItem[];
   subtotal?: number;
   discount?: number;
+  tax?: number;
   total: number;
   paymentMethod: 'Cash' | 'M-Pesa' | 'Debt' | 'Split' | 'Credit';
   amountPaid: number;

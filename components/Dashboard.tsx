@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, PieChart, Pie, Cell, Legend, ComposedChart, Line } from 'recharts';
 import { TrendingUp, DollarSign, AlertCircle, ShoppingBag, Sparkles, Loader2, Target, Edit3, PieChart as PieChartIcon, CreditCard, FileDown, Calendar, Wallet, Banknote, TrendingDown, ArrowRight, AlertTriangle, X, Check, AlertOctagon, Package, Activity, ChevronDown, Filter } from 'lucide-react';
-import { Product, Transaction, StoreProfile, AppView, ShiftRecord } from '../types';
+import { Product, Transaction, StoreProfile, AppView, ShiftRecord, StockLog, Customer } from '../types';
 import { getBusinessInsights } from '../services/geminiService';
 import confetti from 'canvas-confetti';
 import html2canvas from 'html2canvas';
@@ -13,6 +13,8 @@ interface DashboardProps {
   transactions: Transaction[];
   storeProfile: StoreProfile;
   currentShift: ShiftRecord | null;
+  stockLogs: StockLog[];
+  customers: Customer[];
   onNavigate: (view: AppView) => void;
   onUpdateProfile?: (profile: StoreProfile) => void;
 }
@@ -20,13 +22,14 @@ interface DashboardProps {
 const COLORS = ['#0ea5e9', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#6366f1', '#14b8a6'];
 const PIE_COLORS = ['#3b82f6', '#10b981', '#ef4444', '#f59e0b']; // Cash(Blue), Mpesa(Green), Credit(Red), Split(Orange)
 
-export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, storeProfile, currentShift, onNavigate, onUpdateProfile }) => {
+export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, storeProfile, currentShift, stockLogs, customers, onNavigate, onUpdateProfile }) => {
   const [insight, setInsight] = useState<string | null>(null);
   const [loadingInsight, setLoadingInsight] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [salesView, setSalesView] = useState<'weekly' | 'monthly' | 'yearly'>('weekly');
   const [viewDetails, setViewDetails] = useState<{ title: string; items: Product[] } | null>(null);
   const [selectedDayFilter, setSelectedDayFilter] = useState<string>('All');
+  const [spendingMetric, setSpendingMetric] = useState<'spent' | 'points'>('spent');
   const dashboardRef = useRef<HTMLDivElement>(null);
 
   // --- 1. Daily Financial Overview Calculation ---
@@ -98,6 +101,55 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
   const expectedCash = currentShift ? currentShift.closingCashCalculated : 0;
   const actualCash = currentShift?.actualClosingCash;
   const cashVariance = actualCash !== undefined ? actualCash - expectedCash : 0;
+
+  // --- 3. Inventory Value Trend (Last 7 Days) ---
+  const inventoryTrendData = useMemo(() => {
+    const days = 7;
+    const data = [];
+    const now = new Date();
+    
+    // Create a map of current stock
+    const currentStockMap = new Map<string, number>();
+    products.forEach(p => currentStockMap.set(p.id, p.stock));
+
+    // Helper to calculate total value
+    const calculateValue = (stockMap: Map<string, number>) => {
+      let total = 0;
+      stockMap.forEach((qty, id) => {
+        const product = products.find(p => p.id === id);
+        if (product) {
+          total += qty * product.buyPrice;
+        }
+      });
+      return total;
+    };
+
+    // Iterate backwards
+    for (let i = 0; i < days; i++) {
+      const date = new Date(now);
+      date.setDate(date.getDate() - i);
+      const dateStr = date.toISOString().split('T')[0];
+      const dayName = date.toLocaleDateString('en-KE', { weekday: 'short' });
+
+      // Calculate value for end of this day (which is current state for today, or after reversing future logs for past days)
+      const value = calculateValue(currentStockMap);
+      
+      data.unshift({
+        name: dayName,
+        date: dateStr,
+        value: value
+      });
+
+      // Reverse logs for this day to get state at start of day (end of previous day)
+      const daysLogs = stockLogs.filter(log => log.date.startsWith(dateStr));
+      daysLogs.forEach(log => {
+        const currentQty = currentStockMap.get(log.productId) || 0;
+        // If log added stock (+), we subtract to go back. If removed (-), we add.
+        currentStockMap.set(log.productId, currentQty - log.quantityChanged);
+      });
+    }
+    return data;
+  }, [products, stockLogs]);
 
   const expectedMpesa = currentShift ? currentShift.closingMpesaCalculated : 0;
   const actualMpesa = currentShift?.actualClosingMpesa;
@@ -332,6 +384,19 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
         };
     });
   }, [transactions, selectedDayFilter]);
+
+  const topSpendersData = useMemo(() => {
+    return [...customers]
+      .sort((a, b) => {
+        if (spendingMetric === 'spent') return (b.totalSpent || 0) - (a.totalSpent || 0);
+        return (b.loyaltyPoints || 0) - (a.loyaltyPoints || 0);
+      })
+      .slice(0, 5)
+      .map(c => ({
+        name: c.name,
+        value: spendingMetric === 'spent' ? (c.totalSpent || 0) : (c.loyaltyPoints || 0)
+      }));
+  }, [customers, spendingMetric]);
 
   const handleExportPDF = async () => {
     if (!dashboardRef.current) return;
@@ -734,64 +799,159 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
                     </ResponsiveContainer>
                 </div>
              </div>
-         </div>
 
-         {/* Best Sellers List */}
-         <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700 h-full flex flex-col">
-             <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2 mb-6">
-                <PieChartIcon className="w-5 h-5 text-indigo-500" /> Top Performers
-            </h3>
-            
-            {/* Added Pie Chart Section */}
-            {bestSellersData.length > 0 && (
-                <div className="h-48 w-full mb-4 shrink-0">
-                    <ResponsiveContainer width="100%" height="100%">
-                        <PieChart>
-                            <Pie
-                                data={bestSellersData}
-                                cx="50%"
-                                cy="50%"
-                                innerRadius={40}
-                                outerRadius={70}
-                                paddingAngle={4}
-                                dataKey="value"
-                                cornerRadius={4}
-                            >
-                                {bestSellersData.map((entry, index) => (
-                                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                                ))}
-                            </Pie>
+             {/* Inventory Value Trend Chart */}
+             <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700">
+                <div className="flex justify-between items-center mb-6">
+                    <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                        <Package className="w-5 h-5 text-purple-500" /> Inventory Value Trend
+                    </h3>
+                </div>
+                <div className="h-64 w-full">
+                     <ResponsiveContainer width="100%" height="100%">
+                        <AreaChart data={inventoryTrendData}>
+                            <defs>
+                            <linearGradient id="colorInventory" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.3}/>
+                                <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0}/>
+                            </linearGradient>
+                            </defs>
+                            <CartesianGrid strokeDasharray="3 3" opacity={0.1} vertical={false} />
+                            <XAxis dataKey="name" stroke="#9ca3af" fontSize={10} tickLine={false} axisLine={false} dy={10} />
+                            <YAxis stroke="#9ca3af" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(value) => `${(value/1000).toFixed(0)}k`} />
                             <Tooltip 
-                                formatter={(value: number) => [`${storeProfile.currency} ${value.toLocaleString()}`, 'Sales']}
                                 contentStyle={{ backgroundColor: '#111827', borderColor: '#374151', color: '#fff', borderRadius: '12px' }} 
-                                itemStyle={{ color: '#fff' }} 
+                                itemStyle={{ color: '#fff' }}
+                                formatter={(value: number) => [`${storeProfile.currency} ${value.toLocaleString()}`, 'Value']}
                             />
-                        </PieChart>
+                            <Area type="monotone" dataKey="value" stroke="#8b5cf6" strokeWidth={2} fillOpacity={1} fill="url(#colorInventory)" name="Value" />
+                        </AreaChart>
                     </ResponsiveContainer>
                 </div>
-            )}
+             </div>
+         </div>
 
-            <div className="space-y-4 flex-1 overflow-y-auto pr-1">
-                {bestSellersData.length > 0 ? bestSellersData.map((item, index) => (
-                    <div key={index} className="flex items-center justify-between group hover:bg-gray-50 dark:hover:bg-gray-700/50 p-2 rounded-lg transition-colors">
-                        <div className="flex items-center gap-3">
-                            <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white shadow-sm shrink-0" style={{ backgroundColor: COLORS[index % COLORS.length] }}>
-                                {index + 1}
-                            </div>
-                            <span className="text-sm font-medium text-gray-700 dark:text-gray-300 truncate max-w-[120px] group-hover:text-gray-900 dark:group-hover:text-white transition-colors">{item.name}</span>
-                        </div>
-                        <span className="text-sm font-bold text-gray-900 dark:text-white">{storeProfile.currency} {item.value.toLocaleString()}</span>
+         <div className="flex flex-col gap-6">
+             {/* Best Sellers List */}
+             <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700 flex flex-col">
+                 <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2 mb-6">
+                    <PieChartIcon className="w-5 h-5 text-indigo-500" /> Top Performers
+                </h3>
+                
+                {/* Added Pie Chart Section */}
+                {bestSellersData.length > 0 && (
+                    <div className="h-48 w-full mb-4 shrink-0">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <PieChart>
+                                <Pie
+                                    data={bestSellersData}
+                                    cx="50%"
+                                    cy="50%"
+                                    innerRadius={40}
+                                    outerRadius={70}
+                                    paddingAngle={4}
+                                    dataKey="value"
+                                    cornerRadius={4}
+                                >
+                                    {bestSellersData.map((entry, index) => (
+                                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                    ))}
+                                </Pie>
+                                <Tooltip 
+                                    formatter={(value: number) => [`${storeProfile.currency} ${value.toLocaleString()}`, 'Sales']}
+                                    contentStyle={{ backgroundColor: '#111827', borderColor: '#374151', color: '#fff', borderRadius: '12px' }} 
+                                    itemStyle={{ color: '#fff' }} 
+                                />
+                            </PieChart>
+                        </ResponsiveContainer>
                     </div>
-                )) : (
-                     <div className="text-center text-gray-400 py-8 text-sm flex flex-col items-center">
-                        <PieChartIcon className="w-8 h-8 mb-2 opacity-20" />
-                        No sales data available yet
-                     </div>
                 )}
-            </div>
-            <button className="w-full mt-6 py-2.5 text-xs font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/20 rounded-xl hover:bg-indigo-100 dark:hover:bg-indigo-900/40 transition-colors" onClick={() => onNavigate(AppView.INVENTORY)}>
-                View Full Inventory
-            </button>
+
+                <div className="space-y-4 flex-1 overflow-y-auto pr-1">
+                    {bestSellersData.length > 0 ? bestSellersData.map((item, index) => (
+                        <div key={index} className="flex items-center justify-between group hover:bg-gray-50 dark:hover:bg-gray-700/50 p-2 rounded-lg transition-colors">
+                            <div className="flex items-center gap-3">
+                                <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white shadow-sm shrink-0" style={{ backgroundColor: COLORS[index % COLORS.length] }}>
+                                    {index + 1}
+                                </div>
+                                <span className="text-sm font-medium text-gray-700 dark:text-gray-300 truncate max-w-[120px] group-hover:text-gray-900 dark:group-hover:text-white transition-colors">{item.name}</span>
+                            </div>
+                            <span className="text-sm font-bold text-gray-900 dark:text-white">{storeProfile.currency} {item.value.toLocaleString()}</span>
+                        </div>
+                    )) : (
+                         <div className="text-center text-gray-400 py-8 text-sm flex flex-col items-center">
+                            <PieChartIcon className="w-8 h-8 mb-2 opacity-20" />
+                            No sales data available yet
+                         </div>
+                    )}
+                </div>
+                <button className="w-full mt-6 py-2.5 text-xs font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/20 rounded-xl hover:bg-indigo-100 dark:hover:bg-indigo-900/40 transition-colors" onClick={() => onNavigate(AppView.INVENTORY)}>
+                    View Full Inventory
+                </button>
+             </div>
+
+             {/* Top Spenders Chart */}
+             <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700 flex flex-col">
+                 <div className="flex justify-between items-center mb-6">
+                    <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                        <Target className="w-5 h-5 text-emerald-500" /> Top Spenders
+                    </h3>
+                    <div className="flex bg-gray-100 dark:bg-gray-700 rounded-lg p-1">
+                        <button onClick={() => setSpendingMetric('spent')} className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${spendingMetric === 'spent' ? 'bg-white dark:bg-gray-600 shadow-sm text-black dark:text-white' : 'text-gray-500'}`}>Spent</button>
+                        <button onClick={() => setSpendingMetric('points')} className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${spendingMetric === 'points' ? 'bg-white dark:bg-gray-600 shadow-sm text-black dark:text-white' : 'text-gray-500'}`}>Points</button>
+                    </div>
+                 </div>
+
+                 {topSpendersData.length > 0 ? (
+                    <>
+                        <div className="h-48 w-full mb-4 shrink-0">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <PieChart>
+                                    <Pie
+                                        data={topSpendersData}
+                                        cx="50%"
+                                        cy="50%"
+                                        innerRadius={40}
+                                        outerRadius={70}
+                                        paddingAngle={4}
+                                        dataKey="value"
+                                        cornerRadius={4}
+                                    >
+                                        {topSpendersData.map((entry, index) => (
+                                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                        ))}
+                                    </Pie>
+                                    <Tooltip 
+                                        formatter={(value: number) => [spendingMetric === 'spent' ? `${storeProfile.currency} ${value.toLocaleString()}` : `${value.toLocaleString()} pts`, spendingMetric === 'spent' ? 'Total Spent' : 'Loyalty Points']}
+                                        contentStyle={{ backgroundColor: '#111827', borderColor: '#374151', color: '#fff', borderRadius: '12px' }} 
+                                        itemStyle={{ color: '#fff' }} 
+                                    />
+                                </PieChart>
+                            </ResponsiveContainer>
+                        </div>
+                        <div className="space-y-3">
+                            {topSpendersData.map((item, index) => (
+                                <div key={index} className="flex items-center justify-between group hover:bg-gray-50 dark:hover:bg-gray-700/50 p-2 rounded-lg transition-colors">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white shadow-sm shrink-0" style={{ backgroundColor: COLORS[index % COLORS.length] }}>
+                                            {index + 1}
+                                        </div>
+                                        <span className="text-sm font-medium text-gray-700 dark:text-gray-300 truncate max-w-[120px] group-hover:text-gray-900 dark:group-hover:text-white transition-colors">{item.name}</span>
+                                    </div>
+                                    <span className="text-sm font-bold text-gray-900 dark:text-white">
+                                        {spendingMetric === 'spent' ? `${storeProfile.currency} ${item.value.toLocaleString()}` : `${item.value.toLocaleString()} pts`}
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
+                    </>
+                 ) : (
+                     <div className="text-center text-gray-400 py-8 text-sm flex flex-col items-center">
+                        <Target className="w-8 h-8 mb-2 opacity-20" />
+                        No customer data available yet
+                     </div>
+                 )}
+             </div>
          </div>
       </div>
 

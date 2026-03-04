@@ -494,6 +494,7 @@ const App = () => {
   const [profile, setProfile] = useState<StoreProfile>(INITIAL_PROFILE);
   const [products, setProducts] = useState<Product[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [stockLogs, setStockLogs] = useState<StockLog[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [currentShift, setCurrentShift] = useState<ShiftRecord | null>(null);
   const [lastClosedShift, setLastClosedShift] = useState<ShiftRecord | null>(null);
@@ -502,13 +503,14 @@ const App = () => {
   useEffect(() => {
     const loadData = async () => {
       try {
-        const [loadedProducts, loadedTransactions, loadedShift, loadedProfile, loadedCustomers, loadedLastShift] = await Promise.all([
+        const [loadedProducts, loadedTransactions, loadedShift, loadedProfile, loadedCustomers, loadedLastShift, loadedStockLogs] = await Promise.all([
           db.getAllProducts(),
           db.getAllTransactions(),
           db.getCurrentShift(),
           db.getProfile(),
           db.getAllCustomers(),
-          db.getLastClosedShift()
+          db.getLastClosedShift(),
+          db.getStockLogs()
         ]);
 
         if (loadedProducts.length > 0) {
@@ -521,6 +523,7 @@ const App = () => {
 
         // Sort transactions by date desc for UI
         setTransactions(loadedTransactions.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
+        setStockLogs(loadedStockLogs);
         
         setCurrentShift(loadedShift);
         setCustomers(loadedCustomers);
@@ -572,29 +575,29 @@ const App = () => {
     });
     setProducts(newProducts);
 
-    // 3. Update Debt/Credit Account if applicable
-    if (transaction.paymentMethod === 'Debt' && transaction.customerId) {
+    // 3. Update Customer (Debt, Credit, Loyalty)
+    if (transaction.customerId) {
         const customer = customers.find(c => c.id === transaction.customerId);
         if (customer) {
-            // Calculate actual debt amount (Total - Upfront Payment)
-            const debtAdded = transaction.total - transaction.amountPaid;
+            let updatedCustomer = { ...customer };
             
-            const updatedCustomer = {
-                ...customer,
-                totalDebt: customer.totalDebt + debtAdded,
-                lastTransactionDate: new Date().toISOString()
-            };
-            setCustomers(prev => prev.map(c => c.id === customer.id ? updatedCustomer : c));
-            await db.saveCustomer(updatedCustomer);
-        }
-    } else if (transaction.paymentMethod === 'Credit' && transaction.customerId) {
-        const customer = customers.find(c => c.id === transaction.customerId);
-        if (customer) {
-            const updatedCustomer = {
-                ...customer,
-                creditBalance: Math.max(0, (customer.creditBalance || 0) - transaction.total),
-                lastTransactionDate: new Date().toISOString()
-            };
+            // Handle Debt
+            if (transaction.paymentMethod === 'Debt') {
+                 const debtAdded = transaction.total - transaction.amountPaid;
+                 updatedCustomer.totalDebt += debtAdded;
+            }
+            
+            // Handle Credit
+            if (transaction.paymentMethod === 'Credit') {
+                 updatedCustomer.creditBalance = Math.max(0, (updatedCustomer.creditBalance || 0) - transaction.total);
+            }
+
+            // Handle Loyalty & Total Spent (All methods)
+            const pointsEarned = Math.floor(transaction.total / 100);
+            updatedCustomer.loyaltyPoints = (updatedCustomer.loyaltyPoints || 0) + pointsEarned;
+            updatedCustomer.totalSpent = (updatedCustomer.totalSpent || 0) + transaction.total;
+            updatedCustomer.lastTransactionDate = new Date().toISOString();
+
             setCustomers(prev => prev.map(c => c.id === customer.id ? updatedCustomer : c));
             await db.saveCustomer(updatedCustomer);
         }
@@ -639,7 +642,12 @@ const App = () => {
   };
 
   const handleAddCustomer = async (customer: Customer) => {
-      const newCustomer = { ...customer, creditBalance: 0 };
+      const newCustomer = { 
+          ...customer, 
+          creditBalance: 0,
+          loyaltyPoints: 0,
+          totalSpent: 0
+      };
       setCustomers(prev => [...prev, newCustomer]);
       await db.saveCustomer(newCustomer);
   }
@@ -1401,6 +1409,8 @@ const App = () => {
                 transactions={transactions} 
                 storeProfile={profile} 
                 currentShift={currentShift} 
+                stockLogs={stockLogs}
+                customers={customers}
                 onNavigate={(view) => setView(view)}
                 onUpdateProfile={handleUpdateProfile} 
               />

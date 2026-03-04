@@ -1,6 +1,6 @@
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Search, ShoppingCart, Trash2, Plus, Minus, CreditCard, Banknote, User, Coins, X, Split, AlertCircle, RefreshCw, Box, ArrowRight, Receipt, ChevronRight, UserPlus, Target, Calendar, AlertTriangle, ChevronUp, Wallet, Printer, Mail } from 'lucide-react';
+import { Search, ShoppingCart, Trash2, Plus, Minus, CreditCard, Banknote, User, Coins, X, Split, AlertCircle, RefreshCw, Box, ArrowRight, Receipt, ChevronRight, UserPlus, Target, Calendar, AlertTriangle, ChevronUp, Wallet, Printer, Mail, ChevronDown } from 'lucide-react';
 import { Product, CartItem, Transaction, StoreProfile, Customer } from '../types';
 import confetti from 'canvas-confetti';
 import { jsPDF } from 'jspdf';
@@ -210,6 +210,9 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
     let transactionDetails: Partial<Transaction> = {
       amountPaid: total,
       status: 'Completed',
+      customerId: selectedCustomerId || undefined,
+      customerName: selectedCustomerId ? customers.find(c => c.id === selectedCustomerId)?.name : undefined,
+      customerPhone: selectedCustomerId ? customers.find(c => c.id === selectedCustomerId)?.phone : undefined,
     };
 
     if (paymentMethod === 'Cash') {
@@ -346,25 +349,48 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
     });
 
     let y = 10;
+
+    // Add Logo if available
+    if (storeProfile.logoUrl) {
+      try {
+        // Assuming logoUrl is a base64 string
+        doc.addImage(storeProfile.logoUrl, 'JPEG', 30, y, 20, 20);
+        y += 25;
+      } catch (e) {
+        console.error("Failed to add logo to PDF", e);
+      }
+    }
+
     doc.setFontSize(14);
+    doc.setFont("helvetica", "bold");
     doc.text(storeProfile.name, 40, y, { align: 'center' });
     y += 5;
     
     doc.setFontSize(8);
+    doc.setFont("helvetica", "normal");
+    if (storeProfile.location) {
+        doc.text(storeProfile.location, 40, y, { align: 'center' });
+        y += 5;
+    }
+    
     doc.text(`Date: ${new Date(transaction.date).toLocaleString()}`, 40, y, { align: 'center' });
     y += 5;
     doc.text(`Receipt #: ${transaction.id.substring(0, 8).toUpperCase()}`, 40, y, { align: 'center' });
     y += 8;
 
-    doc.setFontSize(10);
-    doc.text('Items', 5, y);
+    doc.setFontSize(9);
+    doc.setFont("helvetica", "bold");
+    doc.text('Item', 5, y);
     doc.text('Qty', 45, y);
     doc.text('Total', 75, y, { align: 'right' });
     y += 2;
     doc.setLineWidth(0.5);
+    doc.setLineDashPattern([1, 1], 0);
     doc.line(5, y, 75, y);
+    doc.setLineDashPattern([], 0);
     y += 4;
 
+    doc.setFont("helvetica", "normal");
     transaction.items.forEach(item => {
       doc.setFontSize(8);
       // Truncate name if too long
@@ -375,27 +401,41 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
       y += 5;
     });
 
+    doc.setLineDashPattern([1, 1], 0);
     doc.line(5, y, 75, y);
+    doc.setLineDashPattern([], 0);
     y += 5;
 
-    if (transaction.subtotal && transaction.discount) {
+    doc.setFontSize(9);
+    if (transaction.subtotal) {
       doc.text('Subtotal:', 45, y);
       doc.text(transaction.subtotal.toFixed(2), 75, y, { align: 'right' });
       y += 5;
+    }
+    
+    if (transaction.discount) {
       doc.text('Discount:', 45, y);
       doc.text(`-${transaction.discount.toFixed(2)}`, 75, y, { align: 'right' });
       y += 5;
     }
 
-    doc.setFontSize(10);
+    doc.text('Tax (0%):', 45, y);
+    doc.text((transaction.tax || 0).toFixed(2), 75, y, { align: 'right' });
+    y += 5;
+
+    doc.setFontSize(11);
+    doc.setFont("helvetica", "bold");
     doc.text('Total:', 45, y);
     doc.text(`${storeProfile.currency} ${transaction.total.toFixed(2)}`, 75, y, { align: 'right' });
     y += 8;
 
     doc.setFontSize(8);
+    doc.setFont("helvetica", "normal");
     doc.text(`Paid via: ${transaction.paymentMethod}`, 40, y, { align: 'center' });
     y += 5;
     doc.text('Thank you for your business!', 40, y, { align: 'center' });
+    y += 4;
+    doc.text('Please come again', 40, y, { align: 'center' });
 
     doc.autoPrint();
     const blob = doc.output('blob');
@@ -632,6 +672,45 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
                 <ChevronRight className="w-5 h-5 rotate-90" />
              </button>
            </div>
+        </div>
+
+        {/* Customer Selection */}
+        <div className="px-4 py-3 bg-gray-50/50 dark:bg-gray-900/50 border-b border-gray-100 dark:border-gray-800">
+            <div className="flex gap-2">
+                <div className="relative flex-1">
+                    <select 
+                        value={selectedCustomerId} 
+                        onChange={(e) => setSelectedCustomerId(e.target.value)}
+                        className="w-full appearance-none bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-sm rounded-xl px-3 py-2.5 focus:ring-2 focus:ring-primary-500 outline-none text-gray-900 dark:text-white font-medium transition-all"
+                    >
+                        <option value="">Walk-in Customer</option>
+                        {customers.map(c => (
+                            <option key={c.id} value={c.id}>{c.name}</option>
+                        ))}
+                    </select>
+                    <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400">
+                        <ChevronDown className="w-4 h-4" />
+                    </div>
+                </div>
+                <button 
+                    onClick={() => setIsNewCustomerOpen(true)}
+                    className="bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400 px-3 rounded-xl hover:bg-primary-100 dark:hover:bg-primary-900/40 transition-colors flex items-center justify-center border border-primary-100 dark:border-primary-900/30"
+                    title="Add New Customer"
+                >
+                    <UserPlus className="w-5 h-5" />
+                </button>
+            </div>
+            {selectedCustomerId && (
+                <div className="mt-2 flex items-center justify-between text-xs px-1">
+                    <div className="text-primary-600 dark:text-primary-400 font-bold flex items-center gap-1.5 bg-primary-50 dark:bg-primary-900/20 px-2 py-1 rounded-lg">
+                        <Target className="w-3.5 h-3.5" />
+                        {customers.find(c => c.id === selectedCustomerId)?.loyaltyPoints || 0} Points
+                    </div>
+                    <div className="text-gray-500 font-medium">
+                        Debt: {storeProfile.currency} {customers.find(c => c.id === selectedCustomerId)?.totalDebt.toLocaleString()}
+                    </div>
+                </div>
+            )}
         </div>
 
         {/* Cart Items List - Expanded space */}
@@ -1134,54 +1213,84 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
             </div>
             
             <div className="p-6 overflow-y-auto flex-1 bg-gray-50 dark:bg-gray-900/50">
-                <div className="bg-white dark:bg-black p-6 rounded-xl border border-gray-200 dark:border-gray-800 shadow-sm font-mono text-sm text-gray-800 dark:text-gray-300">
-                    <div className="text-center mb-6">
-                        <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-1">{storeProfile.name}</h2>
-                        <p className="text-gray-500 text-xs">Receipt #: {receiptTransaction.id.substring(0, 8).toUpperCase()}</p>
-                        <p className="text-gray-500 text-xs">{new Date(receiptTransaction.date).toLocaleString()}</p>
+                <div className="bg-white dark:bg-black p-8 rounded-xl border border-gray-200 dark:border-gray-800 shadow-sm font-mono text-sm text-gray-800 dark:text-gray-300 relative overflow-hidden">
+                    {/* Decorative top edge */}
+                    <div className="absolute top-0 left-0 right-0 h-2 bg-gradient-to-r from-primary-500 to-primary-600"></div>
+
+                    <div className="text-center mb-8 pt-2">
+                        {storeProfile.logoUrl ? (
+                            <img src={storeProfile.logoUrl} alt="Logo" className="h-16 mx-auto mb-4 object-contain" referrerPolicy="no-referrer" />
+                        ) : (
+                            <div className="w-16 h-16 mx-auto mb-4 bg-gray-100 dark:bg-gray-800 rounded-full flex items-center justify-center">
+                                <Box className="w-8 h-8 text-gray-400" />
+                            </div>
+                        )}
+                        <h2 className="text-2xl font-black text-gray-900 dark:text-white mb-1 tracking-tight">{storeProfile.name}</h2>
+                        <p className="text-gray-500 text-xs uppercase tracking-widest">{storeProfile.location}</p>
+                        
+                        <div className="mt-6 flex flex-col items-center justify-center space-y-1 text-xs text-gray-500">
+                            <p>Receipt #: <span className="font-bold text-gray-700 dark:text-gray-300">{receiptTransaction.id.substring(0, 8).toUpperCase()}</span></p>
+                            <p>{new Date(receiptTransaction.date).toLocaleString()}</p>
+                        </div>
                     </div>
 
-                    <div className="border-t border-b border-dashed border-gray-300 dark:border-gray-700 py-3 mb-4 space-y-2">
-                        <div className="flex justify-between font-bold text-gray-900 dark:text-white mb-2">
+                    <div className="border-t-2 border-dashed border-gray-200 dark:border-gray-800 pt-6 pb-2 mb-4">
+                        <div className="flex justify-between font-bold text-gray-400 dark:text-gray-500 text-xs uppercase tracking-wider mb-4">
                             <span>Item</span>
-                            <div className="flex gap-4 text-right">
+                            <div className="flex gap-6 text-right">
                                 <span className="w-8">Qty</span>
                                 <span className="w-16">Total</span>
                             </div>
                         </div>
-                        {receiptTransaction.items.map((item, idx) => (
-                            <div key={idx} className="flex justify-between items-start">
-                                <span className="flex-1 pr-2">{item.name}</span>
-                                <div className="flex gap-4 text-right">
-                                    <span className="w-8">{item.quantity}</span>
-                                    <span className="w-16">{(item.price * item.quantity).toFixed(2)}</span>
+                        <div className="space-y-4">
+                            {receiptTransaction.items.map((item, idx) => (
+                                <div key={idx} className="flex justify-between items-start group">
+                                    <div className="flex-1 pr-4">
+                                        <p className="font-bold text-gray-900 dark:text-white">{item.name}</p>
+                                        <p className="text-xs text-gray-500">@{storeProfile.currency} {item.price.toFixed(2)}</p>
+                                    </div>
+                                    <div className="flex gap-6 text-right items-center mt-1">
+                                        <span className="w-8 text-gray-600 dark:text-gray-400 font-medium">x{item.quantity}</span>
+                                        <span className="w-16 font-bold text-gray-900 dark:text-white">{(item.price * item.quantity).toFixed(2)}</span>
+                                    </div>
                                 </div>
-                            </div>
-                        ))}
-                    </div>
-
-                    <div className="space-y-1 mb-6">
-                        {receiptTransaction.subtotal && receiptTransaction.discount ? (
-                            <>
-                                <div className="flex justify-between text-gray-600 dark:text-gray-400">
-                                    <span>Subtotal:</span>
-                                    <span>{storeProfile.currency} {receiptTransaction.subtotal.toFixed(2)}</span>
-                                </div>
-                                <div className="flex justify-between text-gray-600 dark:text-gray-400">
-                                    <span>Discount:</span>
-                                    <span>-{storeProfile.currency} {receiptTransaction.discount.toFixed(2)}</span>
-                                </div>
-                            </>
-                        ) : null}
-                        <div className="flex justify-between font-bold text-lg text-gray-900 dark:text-white pt-2 border-t border-gray-200 dark:border-gray-800">
-                            <span>Total:</span>
-                            <span>{storeProfile.currency} {receiptTransaction.total.toFixed(2)}</span>
+                            ))}
                         </div>
                     </div>
 
-                    <div className="text-center text-xs text-gray-500">
-                        <p>Paid via: {receiptTransaction.paymentMethod}</p>
-                        <p className="mt-4">Thank you for your business!</p>
+                    <div className="border-t-2 border-dashed border-gray-200 dark:border-gray-800 pt-4 mb-6 space-y-3">
+                        <div className="flex justify-between text-gray-600 dark:text-gray-400">
+                            <span>Subtotal</span>
+                            <span className="font-medium">{storeProfile.currency} {(receiptTransaction.subtotal || receiptTransaction.total).toFixed(2)}</span>
+                        </div>
+                        
+                        {/* Dedicated Discount & Tax Section */}
+                        <div className="bg-gray-50 dark:bg-gray-800/50 p-3 rounded-lg space-y-2">
+                            <div className="flex justify-between text-gray-600 dark:text-gray-400 text-sm">
+                                <span>Discount</span>
+                                <span className="text-red-500 font-medium">
+                                    {receiptTransaction.discount ? `-${storeProfile.currency} ${receiptTransaction.discount.toFixed(2)}` : `${storeProfile.currency} 0.00`}
+                                </span>
+                            </div>
+                            <div className="flex justify-between text-gray-600 dark:text-gray-400 text-sm">
+                                <span>Tax (0%)</span>
+                                <span className="font-medium">{storeProfile.currency} {(receiptTransaction.tax || 0).toFixed(2)}</span>
+                            </div>
+                        </div>
+
+                        <div className="flex justify-between items-end pt-4">
+                            <span className="text-lg font-bold text-gray-900 dark:text-white">Total</span>
+                            <span className="text-3xl font-black text-gray-900 dark:text-white tracking-tight">{storeProfile.currency} {receiptTransaction.total.toFixed(2)}</span>
+                        </div>
+                    </div>
+
+                    <div className="border-t-2 border-dashed border-gray-200 dark:border-gray-800 pt-6 text-center">
+                        <div className="inline-block bg-gray-100 dark:bg-gray-800 px-4 py-2 rounded-lg mb-6">
+                            <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Payment Method</p>
+                            <p className="font-bold text-gray-900 dark:text-white">{receiptTransaction.paymentMethod}</p>
+                        </div>
+                        <p className="text-gray-500 font-medium">Thank you for your business!</p>
+                        <p className="text-xs text-gray-400 mt-1">Please come again</p>
                     </div>
                 </div>
             </div>
