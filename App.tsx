@@ -32,14 +32,17 @@ import {
   History,
   RotateCcw,
   Wifi,
-  WifiOff
+  WifiOff,
+  Calendar,
+  Plus,
+  Eye
 } from 'lucide-react';
 
 import { Dashboard } from './components/Dashboard';
 import { POS } from './components/POS';
 import { Inventory } from './components/Inventory';
 import { Finance } from './components/Finance';
-import { AppView, Product, Transaction, ShiftRecord, StoreProfile, StockLog, Expense, Customer } from './types';
+import { AppView, Product, Transaction, ShiftRecord, StoreProfile, StockLog, Expense, Customer, SpecialDay, PaymentRecord } from './types';
 import * as db from './utils/db';
 
 // Utility for safe ID generation
@@ -52,7 +55,11 @@ const INITIAL_PROFILE: StoreProfile = {
   logoUrl: "https://cdn-icons-png.flaticon.com/512/869/869636.png",
   currency: "KES",
   dailySalesTarget: 10000,
-  adminPin: "1234" // Default PIN
+  adminPin: "1234", // Default PIN
+  specialDays: [
+    { id: '1', name: 'New Year', date: '2024-01-01', theme: 'holiday' },
+    { id: '2', name: 'Christmas', date: '2024-12-25', theme: 'holiday' }
+  ]
 };
 
 const INITIAL_PRODUCTS: Product[] = [
@@ -476,6 +483,7 @@ const App = () => {
   
   // App Loading State
   const [isLoading, setIsLoading] = useState(true);
+  const [activeSpecialDay, setActiveSpecialDay] = useState<SpecialDay | null>(null);
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -747,11 +755,33 @@ const App = () => {
     await db.saveShift(closedShift);
   };
 
-  const handlePayDebt = async (id: string, method: 'Cash' | 'M-Pesa') => {
+  const handlePayDebt = async (id: string, amount: number, method: 'Cash' | 'M-Pesa') => {
     const tx = transactions.find(t => t.id === id);
     if (!tx) return;
 
-    const updatedTx = { ...tx, status: 'Completed' as const, amountPaid: tx.total };
+    // Validate amount
+    const currentPaid = tx.amountPaid || 0;
+    const remaining = tx.total - currentPaid;
+    const paymentAmount = Math.min(amount, remaining); // Prevent overpayment
+
+    if (paymentAmount <= 0) return;
+
+    const newAmountPaid = currentPaid + paymentAmount;
+    const isFullyPaid = newAmountPaid >= tx.total;
+
+    const newPayment: PaymentRecord = {
+        id: generateId(),
+        date: new Date().toISOString(),
+        amount: paymentAmount,
+        method
+    };
+
+    const updatedTx: Transaction = { 
+        ...tx, 
+        amountPaid: newAmountPaid,
+        status: isFullyPaid ? 'Completed' : 'Pending Debt',
+        payments: [...(tx.payments || []), newPayment]
+    };
     
     // Update State
     setTransactions(prev => prev.map(t => t.id === id ? updatedTx : t));
@@ -761,12 +791,9 @@ const App = () => {
     if (tx.customerId) {
         const customer = customers.find(c => c.id === tx.customerId);
         if (customer) {
-             // Calculate how much debt was outstanding for this transaction
-             const debtPaid = tx.total - (tx.amountPaid || 0); // Previous amountPaid was the upfront
-             
              const updatedCustomer = {
                 ...customer,
-                totalDebt: Math.max(0, customer.totalDebt - debtPaid)
+                totalDebt: Math.max(0, customer.totalDebt - paymentAmount)
              };
              setCustomers(prev => prev.map(c => c.id === customer.id ? updatedCustomer : c));
              await db.saveCustomer(updatedCustomer);
@@ -775,13 +802,12 @@ const App = () => {
     
     // Update Shift if open
     if (currentShift && currentShift.isOpen) {
-      const debtPaid = tx.total - (tx.amountPaid || 0);
       const updatedShift = { ...currentShift };
       
       if (method === 'Cash') {
-          updatedShift.closingCashCalculated += debtPaid;
+          updatedShift.closingCashCalculated += paymentAmount;
       } else {
-          updatedShift.closingMpesaCalculated += debtPaid;
+          updatedShift.closingMpesaCalculated += paymentAmount;
       }
 
       setCurrentShift(updatedShift);
@@ -1102,7 +1128,32 @@ const App = () => {
   }
 
   // Settings Component (Inline)
-  const SettingsView = () => (
+  const SettingsView = () => {
+    const [newSpecialDay, setNewSpecialDay] = useState<Partial<SpecialDay>>({ name: '', date: '', theme: 'anniversary' });
+
+    const handleAddSpecialDay = () => {
+      if (!newSpecialDay.name || !newSpecialDay.date) return;
+      const day: SpecialDay = {
+        id: generateId(),
+        name: newSpecialDay.name,
+        date: newSpecialDay.date,
+        theme: newSpecialDay.theme as any
+      };
+      handleUpdateProfile({
+        ...profile,
+        specialDays: [...(profile.specialDays || []), day]
+      });
+      setNewSpecialDay({ name: '', date: '', theme: 'anniversary' });
+    };
+
+    const handleRemoveSpecialDay = (id: string) => {
+      handleUpdateProfile({
+        ...profile,
+        specialDays: (profile.specialDays || []).filter(d => d.id !== id)
+      });
+    };
+
+    return (
     <div className="bg-white dark:bg-gray-900 p-8 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] max-w-2xl mx-auto border border-gray-200 dark:border-gray-800">
       <h2 className="text-3xl font-black mb-8 dark:text-white tracking-tight">Store Settings</h2>
       <div className="space-y-6">
@@ -1188,6 +1239,73 @@ const App = () => {
            </div>
         </div>
 
+        {/* Special Days Section */}
+        <div className="pt-8 border-t border-gray-100 dark:border-gray-800">
+             <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
+                <Calendar className="w-5 h-5 text-pink-500" />
+                Special Days & Events
+            </h3>
+            <div className="space-y-4">
+                <div className="flex gap-2">
+                    <input 
+                        type="text" 
+                        placeholder="Event Name (e.g. Anniversary)" 
+                        value={newSpecialDay.name}
+                        onChange={e => setNewSpecialDay({...newSpecialDay, name: e.target.value})}
+                        className="flex-1 p-3 border border-gray-300 dark:border-gray-700 rounded-xl dark:bg-gray-950 dark:text-white outline-none focus:ring-2 focus:ring-pink-500"
+                    />
+                    <input 
+                        type="date" 
+                        value={newSpecialDay.date}
+                        onChange={e => setNewSpecialDay({...newSpecialDay, date: e.target.value})}
+                        className="w-40 p-3 border border-gray-300 dark:border-gray-700 rounded-xl dark:bg-gray-950 dark:text-white outline-none focus:ring-2 focus:ring-pink-500"
+                    />
+                    <button 
+                        onClick={handleAddSpecialDay}
+                        disabled={!newSpecialDay.name || !newSpecialDay.date}
+                        className="px-4 py-3 bg-pink-500 text-white rounded-xl font-bold hover:bg-pink-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                        <Plus className="w-5 h-5" />
+                    </button>
+                </div>
+                
+                <div className="space-y-2">
+                    {profile.specialDays?.map(day => (
+                        <div key={day.id} className="flex items-center justify-between p-3 bg-pink-50 dark:bg-pink-900/10 border border-pink-100 dark:border-pink-900/30 rounded-xl">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 rounded-lg bg-pink-100 dark:bg-pink-900/30 flex items-center justify-center text-pink-600 dark:text-pink-400 font-bold text-xs">
+                                    {new Date(day.date).getDate()}
+                                </div>
+                                <div>
+                                    <p className="font-bold text-gray-900 dark:text-white">{day.name}</p>
+                                    <p className="text-xs text-gray-500 dark:text-gray-400">{new Date(day.date).toLocaleDateString(undefined, { month: 'long', day: 'numeric' })}</p>
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-1">
+                                <button
+                                    onClick={() => setActiveSpecialDay(day)}
+                                    className="p-2 text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors"
+                                    title="Preview Special Day"
+                                >
+                                    <Eye className="w-4 h-4" />
+                                </button>
+                                <button 
+                                    onClick={() => handleRemoveSpecialDay(day.id)}
+                                    className="p-2 text-gray-400 hover:text-red-500 transition-colors"
+                                    title="Remove Special Day"
+                                >
+                                    <X className="w-4 h-4" />
+                                </button>
+                            </div>
+                        </div>
+                    ))}
+                    {(!profile.specialDays || profile.specialDays.length === 0) && (
+                        <p className="text-sm text-gray-400 italic text-center py-2">No special days added yet.</p>
+                    )}
+                </div>
+            </div>
+        </div>
+
         {/* Data Management Section */}
         <div className="pt-8 border-t border-gray-100 dark:border-gray-800">
             <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
@@ -1226,6 +1344,7 @@ const App = () => {
       </div>
     </div>
   );
+  };
 
   return (
     <div className="flex h-screen bg-[#F0F2F5] dark:bg-black text-gray-900 dark:text-gray-100 font-sans overflow-hidden transition-colors">
@@ -1326,6 +1445,21 @@ const App = () => {
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col h-full overflow-hidden relative">
+        {activeSpecialDay && (
+            <div className="bg-gradient-to-r from-pink-500 via-purple-500 to-indigo-500 text-white p-2 text-center font-bold shadow-md flex items-center justify-between px-4 animate-fade-in z-50 shrink-0">
+                <div className="flex items-center gap-2 mx-auto">
+                    <span className="text-xl">🎉</span>
+                    <span>It's {activeSpecialDay.name}! Special {activeSpecialDay.theme} Mode Active!</span>
+                    <span className="text-xl">🎉</span>
+                </div>
+                <button 
+                    onClick={() => setActiveSpecialDay(null)}
+                    className="p-1 hover:bg-white/20 rounded-full transition-colors"
+                >
+                    <X className="w-4 h-4" />
+                </button>
+            </div>
+        )}
         {/* --- POS MODE HEADER --- */}
         {appMode === 'POS' && (
           <header className="h-16 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between px-6 z-10 shrink-0 gap-4">

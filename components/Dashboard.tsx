@@ -102,9 +102,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
   const actualCash = currentShift?.actualClosingCash;
   const cashVariance = actualCash !== undefined ? actualCash - expectedCash : 0;
 
-  // --- 3. Inventory Value Trend (Last 7 Days) ---
+  // --- 3. Inventory Value Trend ---
+  const [inventoryTrendView, setInventoryTrendView] = useState<'weekly' | 'monthly' | 'yearly'>('weekly');
+
   const inventoryTrendData = useMemo(() => {
-    const days = 7;
     const data = [];
     const now = new Date();
     
@@ -124,32 +125,94 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
       return total;
     };
 
-    // Iterate backwards
-    for (let i = 0; i < days; i++) {
-      const date = new Date(now);
-      date.setDate(date.getDate() - i);
-      const dateStr = date.toISOString().split('T')[0];
-      const dayName = date.toLocaleDateString('en-KE', { weekday: 'short' });
+    if (inventoryTrendView === 'yearly') {
+        // Yearly View: Last 12 Months (Monthly data points)
+        for (let i = 0; i < 12; i++) {
+            const date = new Date(now.getFullYear(), now.getMonth() - i, 1); // 1st of the month
+            // We want the value at the END of this month. 
+            // Actually, iterating backwards:
+            // i=0: Current month. We are at "now". Value is current.
+            // Then we reverse everything from "now" back to "start of month".
+            // Wait, simpler: 
+            // Point 0: Now (Current Value). Label: Current Month.
+            // Reverse logs/txs from Now to Start of Current Month.
+            // Point 1: End of Previous Month.
+            
+            // Let's stick to "End of Month" values.
+            // For the current month (partial), we use "Now".
+            // For previous months, we use "Last Day of Month".
+            
+            const monthName = date.toLocaleDateString('en-KE', { month: 'short', year: '2-digit' });
+            
+            // 1. Capture current state (End of this period)
+            const value = calculateValue(currentStockMap);
+            data.unshift({
+                name: monthName,
+                date: date.toISOString().slice(0, 7),
+                value: value
+            });
 
-      // Calculate value for end of this day (which is current state for today, or after reversing future logs for past days)
-      const value = calculateValue(currentStockMap);
-      
-      data.unshift({
-        name: dayName,
-        date: dateStr,
-        value: value
-      });
+            // 2. Reverse changes for this entire month to get to the start of it (which is end of prev month)
+            // Filter logs/txs that happened in this month (YYYY-MM)
+            const monthPrefix = date.toISOString().slice(0, 7); // YYYY-MM
+            
+            // Reverse Stock Logs
+            const monthLogs = stockLogs.filter(log => log.date.startsWith(monthPrefix));
+            monthLogs.forEach(log => {
+                const currentQty = currentStockMap.get(log.productId) || 0;
+                currentStockMap.set(log.productId, currentQty - log.quantityChanged);
+            });
 
-      // Reverse logs for this day to get state at start of day (end of previous day)
-      const daysLogs = stockLogs.filter(log => log.date.startsWith(dateStr));
-      daysLogs.forEach(log => {
-        const currentQty = currentStockMap.get(log.productId) || 0;
-        // If log added stock (+), we subtract to go back. If removed (-), we add.
-        currentStockMap.set(log.productId, currentQty - log.quantityChanged);
-      });
+            // Reverse Transactions (Sales)
+            const monthTxs = transactions.filter(t => t.date.startsWith(monthPrefix) && t.status !== 'Refunded');
+            monthTxs.forEach(t => {
+                t.items.forEach(item => {
+                    const currentQty = currentStockMap.get(item.productId) || 0;
+                    currentStockMap.set(item.productId, currentQty + item.quantity); // Add back sold items
+                });
+            });
+        }
+    } else {
+        // Weekly (7 days) or Monthly (30 days) - Daily data points
+        const days = inventoryTrendView === 'weekly' ? 7 : 30;
+        
+        for (let i = 0; i < days; i++) {
+            const date = new Date(now);
+            date.setDate(date.getDate() - i);
+            const dateStr = date.toISOString().split('T')[0];
+            const dayName = date.toLocaleDateString('en-KE', { day: 'numeric', month: 'short' });
+
+            // 1. Capture value (End of this day)
+            const value = calculateValue(currentStockMap);
+            
+            data.unshift({
+                name: dayName,
+                date: dateStr,
+                value: value
+            });
+
+            // 2. Reverse logs/txs for this day to get to start of day
+            
+            // Reverse Stock Logs
+            const daysLogs = stockLogs.filter(log => log.date.startsWith(dateStr));
+            daysLogs.forEach(log => {
+                const currentQty = currentStockMap.get(log.productId) || 0;
+                currentStockMap.set(log.productId, currentQty - log.quantityChanged);
+            });
+
+            // Reverse Transactions (Sales)
+            const dayTxs = transactions.filter(t => t.date.startsWith(dateStr) && t.status !== 'Refunded');
+            dayTxs.forEach(t => {
+                t.items.forEach(item => {
+                    const currentQty = currentStockMap.get(item.productId) || 0;
+                    currentStockMap.set(item.productId, currentQty + item.quantity); // Add back sold items
+                });
+            });
+        }
     }
+
     return data;
-  }, [products, stockLogs]);
+  }, [products, stockLogs, transactions, inventoryTrendView]);
 
   const expectedMpesa = currentShift ? currentShift.closingMpesaCalculated : 0;
   const actualMpesa = currentShift?.actualClosingMpesa;
@@ -806,6 +869,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
                     <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2">
                         <Package className="w-5 h-5 text-purple-500" /> Inventory Value Trend
                     </h3>
+                    <div className="flex bg-gray-100 dark:bg-gray-700 rounded-lg p-1">
+                        <button onClick={() => setInventoryTrendView('weekly')} className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${inventoryTrendView === 'weekly' ? 'bg-white dark:bg-gray-600 shadow-sm text-black dark:text-white' : 'text-gray-500'}`}>Week</button>
+                        <button onClick={() => setInventoryTrendView('monthly')} className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${inventoryTrendView === 'monthly' ? 'bg-white dark:bg-gray-600 shadow-sm text-black dark:text-white' : 'text-gray-500'}`}>Month</button>
+                        <button onClick={() => setInventoryTrendView('yearly')} className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${inventoryTrendView === 'yearly' ? 'bg-white dark:bg-gray-600 shadow-sm text-black dark:text-white' : 'text-gray-500'}`}>Year</button>
+                    </div>
                 </div>
                 <div className="h-64 w-full">
                      <ResponsiveContainer width="100%" height="100%">

@@ -19,7 +19,7 @@ interface FinanceProps {
   onOpenShift: (cash: number, mpesa: number) => void;
   onCloseShift: (cash: number, mpesa: number) => void;
   onUpdateShift: (cash: number, mpesa: number) => void;
-  onPayDebt: (transactionId: string, method: 'Cash' | 'M-Pesa') => void;
+  onPayDebt: (transactionId: string, amount: number, method: 'Cash' | 'M-Pesa') => void;
   onRefund: (transaction: Transaction) => void;
   onRecordExpense: (amount: number, reason: string, source: 'Cash' | 'M-Pesa', category?: string) => void;
   onSetDueDate?: (transactionId: string, dueDate: string) => void;
@@ -54,6 +54,7 @@ export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers
 
   // Debt Payment State
   const [payDebtModal, setPayDebtModal] = useState<{ isOpen: boolean; transaction: Transaction | null }>({ isOpen: false, transaction: null });
+  const [debtAmount, setDebtAmount] = useState<string>('');
 
   // Receipt Viewer State
   const [selectedReceipt, setSelectedReceipt] = useState<Transaction | null>(null);
@@ -68,6 +69,10 @@ export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers
   const [expenseSource, setExpenseSource] = useState<'Cash' | 'M-Pesa'>('Cash');
   const [selectedLoyaltyCustomer, setSelectedLoyaltyCustomer] = useState<Customer | null>(null);
   const [loyaltySortBy, setLoyaltySortBy] = useState<'points' | 'spent' | 'name' | 'visit'>('points');
+  
+  // Debt Sorting State
+  const [debtSortField, setDebtSortField] = useState<'name' | 'phone' | 'totalDebt' | 'creditBalance' | 'lastActivity'>('totalDebt');
+  const [debtSortDirection, setDebtSortDirection] = useState<'asc' | 'desc'>('desc');
 
   const expenseCategories = ['Supplies', 'Rent', 'Utilities', 'Transport', 'Salaries', 'Other'];
 
@@ -90,6 +95,37 @@ export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers
   // Derived Data
   const debts = transactions.filter(t => t.paymentMethod === 'Debt' && t.status === 'Pending Debt');
   const totalOutstandingDebt = useMemo(() => customers.reduce((sum, c) => sum + c.totalDebt, 0), [customers]);
+  
+  const sortedCustomers = useMemo(() => {
+    return [...customers].sort((a, b) => {
+      let valA: any = a[debtSortField === 'lastActivity' ? 'lastTransactionDate' : debtSortField];
+      let valB: any = b[debtSortField === 'lastActivity' ? 'lastTransactionDate' : debtSortField];
+
+      if (debtSortField === 'totalDebt' || debtSortField === 'creditBalance') {
+        valA = valA || 0;
+        valB = valB || 0;
+      } else if (debtSortField === 'lastActivity') {
+          valA = valA ? new Date(valA).getTime() : 0;
+          valB = valB ? new Date(valB).getTime() : 0;
+      } else {
+        valA = (valA || '').toString().toLowerCase();
+        valB = (valB || '').toString().toLowerCase();
+      }
+
+      if (valA < valB) return debtSortDirection === 'asc' ? -1 : 1;
+      if (valA > valB) return debtSortDirection === 'asc' ? 1 : -1;
+      return 0;
+    });
+  }, [customers, debtSortField, debtSortDirection]);
+
+  const handleDebtSort = (field: 'name' | 'phone' | 'totalDebt' | 'creditBalance' | 'lastActivity') => {
+    if (debtSortField === field) {
+      setDebtSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      setDebtSortField(field);
+      setDebtSortDirection('desc');
+    }
+  };
   
   // Filter Logic for Receipts
   const filteredTransactions = useMemo(() => {
@@ -183,12 +219,14 @@ export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers
   const handlePayDebtClick = (t: Transaction) => {
     // Force re-render just in case by creating new object reference
     setPayDebtModal({ isOpen: true, transaction: t });
+    setDebtAmount((t.total - (t.amountPaid || 0)).toString());
   };
 
   const confirmPayDebt = (method: 'Cash' | 'M-Pesa') => {
-    if (payDebtModal.transaction) {
-      onPayDebt(payDebtModal.transaction.id, method);
+    if (payDebtModal.transaction && debtAmount) {
+      onPayDebt(payDebtModal.transaction.id, Number(debtAmount), method);
       setPayDebtModal({ isOpen: false, transaction: null });
+      setDebtAmount('');
     }
   };
 
@@ -372,7 +410,7 @@ export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers
         autoTable(doc, {
             startY: 40,
             head: [['Customer', 'Phone', 'Total Debt']],
-            body: customers.map(c => [
+            body: sortedCustomers.map(c => [
                 c.name,
                 c.phone || 'N/A',
                 `${storeProfile.currency} ${c.totalDebt}`
@@ -789,7 +827,16 @@ export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers
                           <span className="text-xs text-gray-400 font-medium">{t.items.reduce((a, b) => a + b.quantity, 0)} items total</span>
                         </div>
                       </td>
-                      <td className="p-4 font-black dark:text-white">{storeProfile.currency} {t.total.toLocaleString()}</td>
+                      <td className="p-4 font-black dark:text-white">
+                        {t.paymentMethod === 'Debt' && t.status !== 'Refunded' ? (
+                            <div>
+                                <div>{storeProfile.currency} {t.total.toLocaleString()}</div>
+                                <div className="text-xs text-gray-400 font-medium">Paid: {storeProfile.currency} {(t.amountPaid || 0).toLocaleString()}</div>
+                            </div>
+                        ) : (
+                            `${storeProfile.currency} ${t.total.toLocaleString()}`
+                        )}
+                      </td>
                       <td className="p-4">
                         <div className="flex flex-col">
                           <span className={`flex items-center gap-1 text-sm font-bold ${t.paymentMethod === 'M-Pesa' ? 'text-green-600' : 'text-gray-700 dark:text-gray-300'}`}>
@@ -890,16 +937,41 @@ export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers
                     <table className="w-full text-left border-collapse">
                         <thead className="bg-red-50 dark:bg-red-900/10 text-red-900 dark:text-red-200 text-sm border-b border-red-100 dark:border-red-900/20">
                         <tr>
-                            <th className="p-4 font-bold">Customer Name</th>
-                            <th className="p-4 font-bold">Phone</th>
-                            <th className="p-4 font-bold">Total Debt</th>
-                            <th className="p-4 font-bold">Credit Balance</th>
-                            <th className="p-4 font-bold">Last Activity</th>
+                            <th className="p-4 font-bold cursor-pointer hover:bg-red-100/50 transition-colors" onClick={() => handleDebtSort('name')}>
+                                <div className="flex items-center gap-1">
+                                    Customer Name
+                                    {debtSortField === 'name' && (debtSortDirection === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />)}
+                                </div>
+                            </th>
+                            <th className="p-4 font-bold cursor-pointer hover:bg-red-100/50 transition-colors" onClick={() => handleDebtSort('phone')}>
+                                <div className="flex items-center gap-1">
+                                    Phone
+                                    {debtSortField === 'phone' && (debtSortDirection === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />)}
+                                </div>
+                            </th>
+                            <th className="p-4 font-bold cursor-pointer hover:bg-red-100/50 transition-colors" onClick={() => handleDebtSort('totalDebt')}>
+                                <div className="flex items-center gap-1">
+                                    Total Debt
+                                    {debtSortField === 'totalDebt' && (debtSortDirection === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />)}
+                                </div>
+                            </th>
+                            <th className="p-4 font-bold cursor-pointer hover:bg-red-100/50 transition-colors" onClick={() => handleDebtSort('creditBalance')}>
+                                <div className="flex items-center gap-1">
+                                    Credit Balance
+                                    {debtSortField === 'creditBalance' && (debtSortDirection === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />)}
+                                </div>
+                            </th>
+                            <th className="p-4 font-bold cursor-pointer hover:bg-red-100/50 transition-colors" onClick={() => handleDebtSort('lastActivity')}>
+                                <div className="flex items-center gap-1">
+                                    Last Activity
+                                    {debtSortField === 'lastActivity' && (debtSortDirection === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />)}
+                                </div>
+                            </th>
                             <th className="p-4 text-right font-bold">Actions</th>
                         </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
-                        {customers.map(c => (
+                        {sortedCustomers.map(c => (
                             <React.Fragment key={c.id}>
                                 <tr className="hover:bg-gray-50 dark:hover:bg-gray-800/30 cursor-pointer transition-colors" onClick={() => setExpandedCustomerId(expandedCustomerId === c.id ? null : c.id)}>
                                     <td className="p-4 font-bold dark:text-white flex items-center gap-2">
@@ -1234,6 +1306,18 @@ export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers
                     {storeProfile.currency} {(payDebtModal.transaction.total - (payDebtModal.transaction.amountPaid || 0)).toLocaleString()}
                  </p>
                </div>
+               
+               <div className="mb-6">
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1 text-center">Payment Amount</label>
+                    <input 
+                        type="number" 
+                        value={debtAmount} 
+                        onChange={(e) => setDebtAmount(e.target.value)}
+                        max={payDebtModal.transaction.total - (payDebtModal.transaction.amountPaid || 0)}
+                        className="w-full p-4 text-center text-2xl font-black border border-gray-200 rounded-xl dark:bg-black dark:border-gray-700 dark:text-white focus:ring-2 focus:ring-primary-500 outline-none"
+                    />
+               </div>
+
                <p className="text-center text-sm font-bold text-gray-600 dark:text-gray-300 mb-4">Select Payment Method</p>
                <div className="space-y-3">
                  <button 
@@ -1655,7 +1739,16 @@ export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers
                                             </div>
                                         </td>
                                         <td className="p-4 text-right font-mono font-bold text-gray-900 dark:text-white">
-                                            {storeProfile.currency} {t.total.toLocaleString()}
+                                            {t.paymentMethod === 'Debt' && t.status !== 'Refunded' ? (
+                                                <div className="flex flex-col items-end">
+                                                    <span>{storeProfile.currency} {t.total.toLocaleString()}</span>
+                                                    <span className="text-xs text-gray-500 font-medium">
+                                                        Paid: {storeProfile.currency} {(t.amountPaid || 0).toLocaleString()}
+                                                    </span>
+                                                </div>
+                                            ) : (
+                                                `${storeProfile.currency} ${t.total.toLocaleString()}`
+                                            )}
                                         </td>
                                         <td className="p-4 text-right">
                                             <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${

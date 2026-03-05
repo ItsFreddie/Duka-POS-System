@@ -55,6 +55,13 @@ export interface Customer {
   lastTransactionDate?: string;
 }
 
+export interface PaymentRecord {
+  id: string;
+  date: string;
+  amount: number;
+  method: 'Cash' | 'M-Pesa';
+}
+
 export interface Transaction {
   id: string;
   date: string;
@@ -65,6 +72,7 @@ export interface Transaction {
   total: number;
   paymentMethod: 'Cash' | 'M-Pesa' | 'Debt' | 'Split' | 'Credit';
   amountPaid: number;
+  payments?: PaymentRecord[];
   splitDetails?: {
     cash: number;
     mpesa: number;
@@ -98,6 +106,13 @@ export interface ShiftRecord {
   isOpen: boolean;
 }
 
+export interface SpecialDay {
+  id: string;
+  name: string;
+  date: string; // MM-DD format
+  theme: 'anniversary' | 'birthday' | 'holiday';
+}
+
 export interface StoreProfile {
   name: string;
   location: string;
@@ -105,6 +120,7 @@ export interface StoreProfile {
   currency: string;
   dailySalesTarget?: number;
   adminPin: string; // New field for security
+  specialDays?: SpecialDay[];
 }
 
 export enum AppView {

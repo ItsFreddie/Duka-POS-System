@@ -264,6 +264,12 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
                cash: debtUpfrontMethod === 'Cash' ? upfront : 0,
                mpesa: debtUpfrontMethod === 'M-Pesa' ? upfront : 0
            };
+           transactionDetails.payments = [{
+               id: generateId(),
+               date: new Date().toISOString(),
+               amount: upfront,
+               method: debtUpfrontMethod
+           }];
        }
     }
     else if (paymentMethod === 'Credit') {
