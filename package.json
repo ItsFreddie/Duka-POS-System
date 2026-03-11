@@ -12,11 +12,13 @@
     "@google/genai": "^1.34.0",
     "@hello-pangea/dnd": "^18.0.1",
     "canvas-confetti": "^1.9.2",
+    "framer-motion": "^12.35.0",
     "html2canvas": "1.4.1",
     "idb": "^8.0.0",
     "jspdf": "2.5.1",
     "jspdf-autotable": "3.8.2",
     "lucide-react": "^0.562.0",
+    "motion": "^12.35.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "recharts": "^3.6.0"

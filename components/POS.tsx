@@ -5,6 +5,7 @@ import { Product, CartItem, Transaction, StoreProfile, Customer } from '../types
 import confetti from 'canvas-confetti';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { motion, AnimatePresence } from 'motion/react';
 
 // Utility Safe ID (Duplicate for safety/isolation)
 const generateId = () => Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
@@ -61,6 +62,50 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
   const [discount, setDiscount] = useState<number>(0);
   const [receiptTransaction, setReceiptTransaction] = useState<Transaction | null>(null);
 
+  // Customer Dropdown State
+  const [isCustomerDropdownOpen, setIsCustomerDropdownOpen] = useState(false);
+  const [customerSearchQuery, setCustomerSearchQuery] = useState('');
+  const customerDropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (customerDropdownRef.current && !customerDropdownRef.current.contains(event.target as Node)) {
+        setIsCustomerDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Sale Timer State
+  const [saleStartTime, setSaleStartTime] = useState<number | null>(null);
+  const [saleDuration, setSaleDuration] = useState<number>(0);
+
+  useEffect(() => {
+    if (cart.length > 0 && !saleStartTime) {
+      setSaleStartTime(Date.now());
+    } else if (cart.length === 0) {
+      setSaleStartTime(null);
+      setSaleDuration(0);
+    }
+  }, [cart.length, saleStartTime]);
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (saleStartTime) {
+      interval = setInterval(() => {
+        setSaleDuration(Math.floor((Date.now() - saleStartTime) / 1000));
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [saleStartTime]);
+
+  const formatDuration = (seconds: number) => {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  };
+
   const categories = ['All', ...Array.from(new Set(products.map(p => p.category)))];
 
   // Daily Sales Calculation (Kept for Confetti Logic only)
@@ -78,6 +123,18 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
       return matchesSearch && matchesCategory;
     });
   }, [products, search, categoryFilter]);
+
+  const topSellers = useMemo(() => {
+    const counts: Record<string, number> = {};
+    transactions.forEach(t => {
+      if (t.status !== 'Refunded') {
+        t.items.forEach(item => {
+          counts[item.id] = (counts[item.id] || 0) + item.quantity;
+        });
+      }
+    });
+    return [...products].sort((a, b) => (counts[b.id] || 0) - (counts[a.id] || 0)).slice(0, 3);
+  }, [products, transactions]);
 
   const subtotal = useMemo(() => cart.reduce((acc, item) => acc + (item.sellPrice * item.quantity), 0), [cart]);
   const total = useMemo(() => Math.max(0, subtotal - discount), [subtotal, discount]);
@@ -664,7 +721,14 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
              </div>
              <div>
                 <h2 className="font-black text-lg text-gray-900 dark:text-white leading-none mb-1">Current Sale</h2>
-                <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wide">{cart.length} Items</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wide">{cart.length} Items</p>
+                  {saleDuration > 0 && (
+                    <span className="text-[10px] font-bold text-primary-500 bg-primary-50 dark:bg-primary-900/20 px-1.5 py-0.5 rounded-md">
+                      {formatDuration(saleDuration)}
+                    </span>
+                  )}
+                </div>
              </div>
           </div>
           <div className="flex gap-2">
@@ -681,422 +745,475 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
         </div>
 
         {/* Customer Selection */}
-        <div className="px-4 py-3 bg-gray-50/50 dark:bg-gray-900/50 border-b border-gray-100 dark:border-gray-800">
-            <div className="flex gap-2">
-                <div className="relative flex-1">
-                    <select 
-                        value={selectedCustomerId} 
-                        onChange={(e) => setSelectedCustomerId(e.target.value)}
-                        className="w-full appearance-none bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-sm rounded-xl px-3 py-2.5 focus:ring-2 focus:ring-primary-500 outline-none text-gray-900 dark:text-white font-medium transition-all"
-                    >
-                        <option value="">Walk-in Customer</option>
-                        {customers.map(c => (
-                            <option key={c.id} value={c.id}>{c.name}</option>
-                        ))}
-                    </select>
-                    <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400">
-                        <ChevronDown className="w-4 h-4" />
-                    </div>
-                </div>
-                <button 
-                    onClick={() => setIsNewCustomerOpen(true)}
-                    className="bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400 px-3 rounded-xl hover:bg-primary-100 dark:hover:bg-primary-900/40 transition-colors flex items-center justify-center border border-primary-100 dark:border-primary-900/30"
-                    title="Add New Customer"
+        <div className="px-4 py-3 bg-gray-50/50 dark:bg-gray-900/50 border-b border-gray-100 dark:border-gray-800 flex gap-3 items-center">
+            <div className="relative flex-1" ref={customerDropdownRef}>
+                <div 
+                    onClick={() => setIsCustomerDropdownOpen(!isCustomerDropdownOpen)}
+                    className="w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-sm rounded-lg px-3 py-2 flex items-center justify-between cursor-pointer text-gray-900 dark:text-white font-medium transition-all shadow-sm focus-within:ring-2 focus-within:ring-primary-500"
                 >
-                    <UserPlus className="w-5 h-5" />
-                </button>
-            </div>
-            {selectedCustomerId && (
-                <div className="mt-2 flex items-center justify-between text-xs px-1">
-                    <div className="text-primary-600 dark:text-primary-400 font-bold flex items-center gap-1.5 bg-primary-50 dark:bg-primary-900/20 px-2 py-1 rounded-lg">
-                        <Target className="w-3.5 h-3.5" />
-                        {customers.find(c => c.id === selectedCustomerId)?.loyaltyPoints || 0} Points
-                    </div>
-                    <div className="text-gray-500 font-medium">
-                        Debt: {storeProfile.currency} {customers.find(c => c.id === selectedCustomerId)?.totalDebt.toLocaleString()}
-                    </div>
+                    <span className="truncate">
+                        {selectedCustomerId 
+                            ? customers.find(c => c.id === selectedCustomerId)?.name || 'Walk-in Customer'
+                            : 'Walk-in Customer'}
+                    </span>
+                    <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${isCustomerDropdownOpen ? 'rotate-180' : ''}`} />
                 </div>
-            )}
+                
+                <AnimatePresence>
+                    {isCustomerDropdownOpen && (
+                        <motion.div 
+                            initial={{ opacity: 0, y: -10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -10 }}
+                            className="absolute z-50 w-full mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg overflow-hidden"
+                        >
+                            <div className="p-2 border-b border-gray-100 dark:border-gray-700">
+                                <div className="relative">
+                                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                                    <input 
+                                        type="text"
+                                        placeholder="Search customers..."
+                                        value={customerSearchQuery}
+                                        onChange={(e) => setCustomerSearchQuery(e.target.value)}
+                                        className="w-full pl-8 pr-3 py-1.5 text-sm bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-md focus:outline-none focus:ring-1 focus:ring-primary-500 text-gray-900 dark:text-white"
+                                        autoFocus
+                                    />
+                                </div>
+                            </div>
+                            <div className="max-h-48 overflow-y-auto custom-scrollbar">
+                                <div 
+                                    onClick={() => {
+                                        setSelectedCustomerId('');
+                                        setIsCustomerDropdownOpen(false);
+                                        setCustomerSearchQuery('');
+                                    }}
+                                    className={`px-3 py-2 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/50 ${!selectedCustomerId ? 'bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400 font-semibold' : 'text-gray-700 dark:text-gray-300'}`}
+                                >
+                                    Walk-in Customer
+                                </div>
+                                {customers
+                                    .filter(c => c.name.toLowerCase().includes(customerSearchQuery.toLowerCase()) || c.phone?.includes(customerSearchQuery))
+                                    .map(c => (
+                                    <div 
+                                        key={c.id}
+                                        onClick={() => {
+                                            setSelectedCustomerId(c.id);
+                                            setIsCustomerDropdownOpen(false);
+                                            setCustomerSearchQuery('');
+                                        }}
+                                        className={`px-3 py-2 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/50 ${selectedCustomerId === c.id ? 'bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400 font-semibold' : 'text-gray-700 dark:text-gray-300'}`}
+                                    >
+                                        <div className="flex justify-between items-center">
+                                            <span>{c.name}</span>
+                                            {c.phone && <span className="text-xs text-gray-400">{c.phone}</span>}
+                                        </div>
+                                    </div>
+                                ))}
+                                {customers.filter(c => c.name.toLowerCase().includes(customerSearchQuery.toLowerCase()) || c.phone?.includes(customerSearchQuery)).length === 0 && (
+                                    <div className="px-3 py-4 text-sm text-center text-gray-500 dark:text-gray-400">
+                                        No customers found
+                                    </div>
+                                )}
+                            </div>
+                        </motion.div>
+                    )}
+                </AnimatePresence>
+            </div>
+            <button 
+                onClick={() => setIsNewCustomerOpen(true)}
+                className="bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400 p-2 rounded-lg hover:bg-primary-100 dark:hover:bg-primary-900/40 transition-colors flex items-center justify-center border border-primary-100 dark:border-primary-900/30 shadow-sm"
+                title="Add New Customer"
+            >
+                <UserPlus className="w-5 h-5" />
+            </button>
         </div>
 
         {/* Cart Items List - Expanded space */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50/50 dark:bg-black/20">
+        <div className="flex-1 overflow-y-auto p-2 space-y-2 bg-gray-50/50 dark:bg-black/20 custom-scrollbar pb-4">
           {cart.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-gray-400 dark:text-gray-600 space-y-4 opacity-70">
-              <div className="w-24 h-24 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
-                <ShoppingCart className="w-10 h-10" />
+            <div className="h-full flex flex-col items-center justify-center text-gray-400 dark:text-gray-600 space-y-4 opacity-80 px-4">
+              <div className="w-16 h-16 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center mb-2">
+                <ShoppingCart className="w-8 h-8" />
               </div>
-              <p className="font-bold text-lg text-gray-600 dark:text-gray-400">Cart is empty</p>
-              <p className="text-xs text-gray-400 dark:text-gray-500">Select products to start a sale</p>
+              <p className="font-bold text-sm text-gray-600 dark:text-gray-400">Start a sale</p>
+              
+              {topSellers.length > 0 && (
+                <div className="w-full mt-6">
+                  <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-2 text-center">Top Sellers</p>
+                  <div className="space-y-2">
+                    {topSellers.map(p => (
+                      <button 
+                        key={p.id}
+                        onClick={() => addToCart(p)}
+                        className="w-full flex items-center justify-between p-2 bg-white dark:bg-gray-800 rounded-lg border border-gray-100 dark:border-gray-700 hover:border-primary-500 dark:hover:border-primary-500 transition-colors shadow-sm"
+                      >
+                        <span className="text-xs font-bold text-gray-900 dark:text-white truncate pr-2">{p.name}</span>
+                        <span className="text-xs font-bold text-primary-600 dark:text-primary-400 whitespace-nowrap">{storeProfile.currency} {p.sellPrice}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
-            cart.map(item => {
-              const isFractional = item.measurementUnit && item.measurementUnit !== 'pcs';
-              const lineTotal = item.sellPrice * item.quantity;
-              const isOverStock = item.quantity > item.stock;
+            <AnimatePresence initial={false}>
+              {cart.map(item => {
+                const isFractional = item.measurementUnit && item.measurementUnit !== 'pcs';
+                const lineTotal = item.sellPrice * item.quantity;
+                const isOverStock = item.quantity > item.stock;
 
-              return (
-              <div key={item.id} className="flex flex-col p-2.5 bg-white dark:bg-gray-800/80 rounded-2xl border border-gray-100 dark:border-gray-800 shadow-sm group hover:shadow-md transition-all duration-300 mb-2">
-                <div className="flex justify-between items-start mb-2">
-                    <div className="flex-1 min-w-0 mr-3">
-                        <h4 className="font-bold truncate text-sm text-gray-900 dark:text-white mb-0.5">{item.name}</h4>
-                        <div className="text-[10px] text-gray-500 dark:text-gray-400 font-medium">
-                           {storeProfile.currency} {item.sellPrice} / {item.measurementUnit || 'pc'}
-                        </div>
-                    </div>
-                    
-                    {/* Amount Input for fractional items */}
-                    <div className="flex flex-col items-end">
-                        <span className="text-[9px] font-bold text-gray-400 uppercase mb-0.5 tracking-wider">Amount</span>
-                        {isFractional ? (
-                            <div className="flex items-center border-b-2 border-primary-100 focus-within:border-primary-500 dark:border-gray-700 dark:focus-within:border-primary-500 transition-colors">
-                                <span className="text-[10px] font-bold text-gray-400 mr-1">{storeProfile.currency}</span>
-                                <input 
-                                    type="number"
-                                    min="0"
-                                    step="any"
-                                    className="w-16 text-right font-bold text-sm bg-transparent outline-none text-gray-900 dark:text-white"
-                                    value={lineTotal === 0 ? '' : Number(lineTotal.toFixed(2))} 
-                                    onChange={(e) => updateLineTotal(item.id, e.target.value)}
-                                    placeholder="0"
-                                />
-                            </div>
-                        ) : (
-                            <div className="font-bold text-sm text-gray-900 dark:text-white">
-                                {storeProfile.currency} {lineTotal.toLocaleString()}
-                            </div>
-                        )}
-                    </div>
-                </div>
+                return (
+                <motion.div 
+                  key={item.id} 
+                  initial={{ opacity: 0, x: -20, scale: 0.95 }}
+                  animate={{ opacity: 1, x: 0, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.2 } }}
+                  transition={{ type: "spring", stiffness: 500, damping: 30 }}
+                  className="flex flex-col p-2 bg-white dark:bg-gray-800/80 rounded-xl border border-gray-100 dark:border-gray-800 shadow-sm group hover:shadow-md transition-shadow duration-300"
+                >
+                  <div className="flex justify-between items-start mb-1.5">
+                      <div className="flex-1 min-w-0 mr-2">
+                          <h4 className="font-bold truncate text-xs text-gray-900 dark:text-white leading-tight">{item.name}</h4>
+                          <div className="text-[9px] text-gray-500 dark:text-gray-400 font-medium">
+                             {storeProfile.currency} {item.sellPrice} / {item.measurementUnit || 'pc'}
+                          </div>
+                      </div>
+                      
+                      {/* Amount Input for fractional items */}
+                      <div className="flex flex-col items-end">
+                          {isFractional ? (
+                              <div className="flex items-center border-b border-primary-100 focus-within:border-primary-500 dark:border-gray-700 dark:focus-within:border-primary-500 transition-colors">
+                                  <span className="text-[9px] font-bold text-gray-400 mr-0.5">{storeProfile.currency}</span>
+                                  <input 
+                                      type="number"
+                                      min="0"
+                                      step="any"
+                                      className="w-12 text-right font-bold text-xs bg-transparent outline-none text-gray-900 dark:text-white"
+                                      value={lineTotal === 0 ? '' : Number(lineTotal.toFixed(2))} 
+                                      onChange={(e) => updateLineTotal(item.id, e.target.value)}
+                                      placeholder="0"
+                                  />
+                              </div>
+                          ) : (
+                              <div className="font-bold text-xs text-gray-900 dark:text-white">
+                                  {storeProfile.currency} {lineTotal.toLocaleString()}
+                              </div>
+                          )}
+                      </div>
+                  </div>
 
-                <div className="flex justify-between items-center">
-                    {/* Quantity Controls */}
-                    <div className="flex items-center gap-1 bg-gray-50 dark:bg-gray-900/50 rounded-xl p-1 border border-gray-100 dark:border-gray-800">
-                        <button onClick={() => updateQuantity(item.id, -1)} className="w-7 h-7 flex items-center justify-center hover:bg-white dark:hover:bg-gray-800 rounded-lg text-gray-500 hover:text-red-500 dark:text-gray-400 transition-all shadow-sm">
-                            <Minus className="w-3 h-3" />
-                        </button>
-                        
-                        {isFractional ? (
-                            <input 
-                                type="number" 
-                                step="0.001"
-                                min="0.001"
-                                value={item.quantity === 0 ? '' : item.quantity}
-                                onChange={(e) => setDirectQuantity(item.id, e.target.value)}
-                                className="w-14 text-center text-xs font-bold bg-transparent focus:border-b-2 focus:border-primary-500 outline-none p-0 text-gray-900 dark:text-white"
-                            />
-                        ) : (
-                            <span className="w-8 text-center font-bold text-xs text-gray-900 dark:text-white tabular-nums">{item.quantity}</span>
-                        )}
-                        <span className="text-[10px] text-gray-400 font-medium pr-1">{item.measurementUnit || 'pcs'}</span>
-                        
-                        <button onClick={() => updateQuantity(item.id, 1)} className="w-7 h-7 flex items-center justify-center hover:bg-white dark:hover:bg-gray-800 rounded-lg text-gray-500 hover:text-green-500 dark:text-gray-400 transition-all shadow-sm">
-                            <Plus className="w-3 h-3" />
-                        </button>
-                    </div>
+                  <div className="flex justify-between items-center">
+                      {/* Quantity Controls */}
+                      <div className="flex items-center gap-1 bg-gray-50 dark:bg-gray-900/50 rounded-lg p-0.5 border border-gray-100 dark:border-gray-800">
+                          <button onClick={() => updateQuantity(item.id, -1)} className="w-6 h-6 flex items-center justify-center hover:bg-white dark:hover:bg-gray-800 rounded-md text-gray-500 hover:text-red-500 dark:text-gray-400 transition-all shadow-sm">
+                              <Minus className="w-3 h-3" />
+                          </button>
+                          
+                          <input 
+                              type="number" 
+                              step={isFractional ? "0.001" : "1"}
+                              min={isFractional ? "0.001" : "1"}
+                              value={item.quantity === 0 ? '' : item.quantity}
+                              onChange={(e) => setDirectQuantity(item.id, e.target.value)}
+                              className="w-10 text-center text-xs font-bold bg-transparent focus:border-b focus:border-primary-500 outline-none p-0 text-gray-900 dark:text-white tabular-nums"
+                          />
+                          <span className="text-[9px] text-gray-400 font-medium pr-1">{item.measurementUnit || 'pcs'}</span>
+                          
+                          <button onClick={() => updateQuantity(item.id, 1)} className="w-6 h-6 flex items-center justify-center hover:bg-white dark:hover:bg-gray-800 rounded-md text-gray-500 hover:text-green-500 dark:text-gray-400 transition-all shadow-sm">
+                              <Plus className="w-3 h-3" />
+                          </button>
+                      </div>
 
-                    {isOverStock ? (
-                        <div className="flex items-center gap-1 text-[9px] text-red-500 font-bold bg-red-50 dark:bg-red-900/20 px-2 py-1 rounded-full animate-pulse">
-                            <AlertCircle className="w-3 h-3" /> Low Stock
-                        </div>
-                    ) : (
-                        <button onClick={() => removeFromCart(item.id)} className="text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 p-1.5 rounded-lg transition-colors">
-                            <Trash2 className="w-4 h-4" />
-                        </button>
-                    )}
-                </div>
-              </div>
-            )})
+                      {isOverStock ? (
+                          <div className="flex items-center gap-1 text-[8px] text-red-500 font-bold bg-red-50 dark:bg-red-900/20 px-1.5 py-0.5 rounded-full animate-pulse">
+                              <AlertCircle className="w-2.5 h-2.5" /> Low Stock
+                          </div>
+                      ) : (
+                          <button onClick={() => removeFromCart(item.id)} className="text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 p-1 rounded-md transition-colors">
+                              <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                      )}
+                  </div>
+                </motion.div>
+              )})
+              }
+            </AnimatePresence>
           )}
         </div>
 
-        {/* Footer / Payment - Compacted */}
-        <div className="p-4 bg-white dark:bg-gray-900 border-t border-gray-100 dark:border-gray-800 shadow-[0_-20px_40px_-15px_rgba(0,0,0,0.05)] z-20">
-          
-          {/* Subtotal & Discount */}
-          {cart.length > 0 && (
-            <div className="flex justify-between items-center mb-2 text-sm">
-              <span className="text-gray-500 font-medium">Subtotal</span>
-              <span className="font-bold text-gray-900 dark:text-white">{storeProfile.currency} {subtotal.toLocaleString()}</span>
-            </div>
-          )}
-          {cart.length > 0 && (
-            <div className="flex justify-between items-center mb-4 text-sm">
-              <span className="text-gray-500 font-medium">Discount</span>
-              <div className="flex items-center border-b border-gray-300 dark:border-gray-700 focus-within:border-primary-500 transition-colors">
-                <span className="text-gray-400 mr-1">{storeProfile.currency}</span>
-                <input 
-                  type="number"
-                  min="0"
-                  step="any"
-                  className="w-16 text-right font-bold bg-transparent outline-none text-red-500 dark:text-red-400"
-                  value={discount === 0 ? '' : discount}
-                  onChange={(e) => setDiscount(Number(e.target.value) || 0)}
-                  placeholder="0"
-                />
-              </div>
-            </div>
-          )}
-
-          {/* Total Display */}
-           <div className="flex justify-between items-end mb-4 pt-2 border-t border-gray-100 dark:border-gray-800 border-dashed">
-            <div className="flex flex-col">
-               <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-0.5">Total Payable</span>
-               <span className="text-3xl font-black text-gray-900 dark:text-white tracking-tight leading-none">{storeProfile.currency} {total.toLocaleString()}</span>
-            </div>
-            {changeDue > 0 && (
-                <div className="text-right flex flex-col animate-fade-in">
-                    <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest mb-0.5">Change Due</span>
-                    <span className="text-lg font-bold text-emerald-600 dark:text-emerald-400 leading-none">{storeProfile.currency} {changeDue.toLocaleString()}</span>
-                </div>
-            )}
-          </div>
-
-          {/* Payment Method Selector */}
-          <div className="grid grid-cols-5 gap-1 mb-4 bg-gray-100 dark:bg-gray-800/50 p-1 rounded-2xl">
-            {[
-              { id: 'Cash', icon: Banknote, label: 'Cash' },
-              { id: 'M-Pesa', icon: CreditCard, label: 'M-Pesa' },
-              { id: 'Split', icon: Split, label: 'Split' },
-              { id: 'Debt', icon: User, label: 'Debt' },
-              { id: 'Credit', icon: Wallet, label: 'Credit' },
-            ].map(pm => {
-                const isSelected = paymentMethod === pm.id;
-                return (
-                  <button
-                    key={pm.id}
-                    onClick={() => setPaymentMethod(pm.id as any)}
-                    className={`relative flex flex-col items-center justify-center py-2 rounded-xl transition-all duration-300 ${
-                      isSelected
-                        ? `bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm scale-100` 
-                        : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800 scale-95 hover:scale-100'
-                    }`}
-                  >
-                    <pm.icon className={`w-4 h-4 mb-0.5 ${isSelected ? 'animate-bounce text-primary-500' : ''}`} />
-                    <span className="text-[8px] font-bold uppercase tracking-wider">{pm.label}</span>
-                  </button>
-                )
-            })}
-          </div>
-
-          {/* Dynamic Payment Inputs - Reduced height */}
-          <div className="space-y-3 mb-3 min-h-[70px]">
-            {paymentMethod === 'Cash' && (
-              <div className="space-y-2 animate-fade-in">
-                <div className="relative">
-                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold text-base">{storeProfile.currency}</span>
-                  <input
-                    name="cashTendered"
-                    type="number"
-                    placeholder="Enter Cash Received"
-                    className="w-full pl-12 pr-4 py-3 text-lg font-bold bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-800 rounded-xl focus:ring-2 focus:ring-gray-900 dark:focus:ring-white outline-none transition-all placeholder:text-gray-400 dark:placeholder:text-gray-700 text-gray-900 dark:text-white"
-                    value={cashTendered}
-                    onChange={e => setCashTendered(e.target.value)}
-                  />
-                </div>
-                <div className="flex gap-2 justify-between">
-                   {quickCashAmounts.map(amt => (
-                     <button 
-                       key={amt}
-                       onClick={() => setCashTendered(amt.toString())}
-                       className="flex-1 py-1.5 text-[10px] bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 font-bold text-gray-600 dark:text-gray-300 shadow-sm transition-transform active:scale-95"
-                     >
-                       {amt}
-                     </button>
-                   ))}
-                </div>
-              </div>
-            )}
-
-            {paymentMethod === 'M-Pesa' && (
-              <div className="space-y-2 animate-fade-in">
-                <div className="relative">
-                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold text-base">{storeProfile.currency}</span>
-                  <input
-                    name="mpesaTendered"
-                    type="number"
-                    placeholder="Enter M-Pesa Amount"
-                    className="w-full pl-12 pr-4 py-3 text-lg font-bold bg-green-50/50 dark:bg-green-900/10 border border-green-200 dark:border-green-900/30 rounded-xl focus:ring-2 focus:ring-green-500 outline-none transition-all placeholder:text-green-300 text-gray-900 dark:text-white"
-                    value={mpesaTendered}
-                    onChange={e => setMpesaTendered(e.target.value)}
-                  />
-                </div>
-                 <div className="flex gap-2 justify-between">
-                     <button 
-                       onClick={() => setMpesaTendered(total.toString())}
-                       className="w-full py-2 text-xs bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 rounded-lg hover:bg-green-200 dark:hover:bg-green-900/50 font-bold transition-transform active:scale-95"
-                     >
-                       Full Payment ({total})
-                     </button>
-                </div>
-              </div>
-            )}
-
-            {paymentMethod === 'Split' && (
-              <div className="space-y-2 animate-fade-in p-3 bg-blue-50 dark:bg-blue-900/10 rounded-xl border border-blue-100 dark:border-blue-900/20">
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label htmlFor="split-cash" className="text-[9px] font-bold text-blue-600 dark:text-blue-400 uppercase block mb-1 ml-1">Cash Part</label>
-                    <input
-                      id="split-cash"
-                      name="splitCash"
-                      type="number"
-                      placeholder="0"
-                      className="w-full p-2 border border-blue-200 dark:border-blue-800 rounded-lg dark:bg-black text-gray-900 dark:text-white font-bold focus:ring-2 focus:ring-blue-500 outline-none text-sm"
-                      value={splitCash}
-                      onChange={e => setSplitCash(e.target.value)}
-                    />
+        {/* Footer / Payment - iOS Glass Morphism */}
+        <div className="mt-auto p-4 bg-white/80 dark:bg-black/60 backdrop-blur-2xl border-t border-gray-200/50 dark:border-white/10 z-30 relative shadow-[0_-8px_30px_-15px_rgba(0,0,0,0.1)] dark:shadow-none transition-colors duration-300">
+          <div className="relative z-10">
+              {/* Subtotal & Change Due */}
+              {cart.length > 0 && (
+                <div className="flex justify-between items-end mb-4">
+                  <div className="flex flex-col">
+                      <span className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-0.5">Subtotal</span>
+                      <span className="text-3xl font-bold text-gray-900 dark:text-white tracking-tight leading-none">{storeProfile.currency} {total.toLocaleString()}</span>
                   </div>
-                  <div>
-                    <label htmlFor="split-mpesa" className="text-[9px] font-bold text-blue-600 dark:text-blue-400 uppercase block mb-1 ml-1">M-Pesa Part</label>
-                    <input
-                      id="split-mpesa"
-                      name="splitMpesa"
-                      type="number"
-                      placeholder="0"
-                      className="w-full p-2 border border-blue-200 dark:border-blue-800 rounded-lg dark:bg-black text-gray-900 dark:text-white font-bold focus:ring-2 focus:ring-blue-500 outline-none text-sm"
-                      value={splitMpesa}
-                      onChange={e => setSplitMpesa(e.target.value)}
-                    />
-                  </div>
+                  <AnimatePresence>
+                    {changeDue > 0 && (
+                        <motion.div 
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: 10 }}
+                          className="text-right flex flex-col"
+                        >
+                            <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider mb-0.5">Change Due</span>
+                            <span className="text-xl font-bold text-emerald-600 dark:text-emerald-400 leading-none">{storeProfile.currency} {changeDue.toLocaleString()}</span>
+                        </motion.div>
+                    )}
+                  </AnimatePresence>
                 </div>
-                <div className="flex justify-between text-[10px] font-bold pt-1 border-t border-blue-200 dark:border-blue-800 mt-1 pt-1">
-                   <span className={Number(splitCash) + Number(splitMpesa) >= total ? "text-emerald-600" : "text-red-500"}>
-                     Paid: {(Number(splitCash) + Number(splitMpesa)).toLocaleString()}
-                   </span>
-                </div>
-              </div>
-            )}
+              )}
 
-            {paymentMethod === 'Debt' && (
-               <div className="space-y-2 animate-fade-in p-3 bg-red-50 dark:bg-red-900/10 rounded-xl border border-red-100 dark:border-red-900/20">
-                  <div className="flex gap-2 mb-2 items-center">
-                      <select 
-                        value={selectedCustomerId}
-                        onChange={(e) => setSelectedCustomerId(e.target.value)}
-                        className="flex-1 w-full min-w-0 p-2.5 text-sm border border-red-200 dark:border-red-800 rounded-lg dark:bg-black text-gray-900 dark:text-white font-medium focus:ring-2 focus:ring-red-500 outline-none"
+              {/* Payment Method Selector - iOS Segmented Control Style */}
+              <div className="flex p-1 mb-4 bg-gray-100/80 dark:bg-gray-800/80 rounded-xl backdrop-blur-md border border-gray-200/50 dark:border-gray-700/50 relative">
+                {[
+                  { id: 'Cash', icon: Banknote, label: 'Cash' },
+                  { id: 'M-Pesa', icon: CreditCard, label: 'M-Pesa' },
+                  { id: 'Split', icon: Split, label: 'Split' },
+                  { id: 'Debt', icon: User, label: 'Debt' },
+                  { id: 'Credit', icon: Wallet, label: 'Credit' },
+                ].map(pm => {
+                    const isSelected = paymentMethod === pm.id;
+                    return (
+                      <button
+                        key={pm.id}
+                        onClick={() => setPaymentMethod(pm.id as any)}
+                        className={`relative flex-1 flex flex-col items-center justify-center py-2 rounded-lg transition-all duration-300 z-10 ${
+                          isSelected
+                            ? 'text-gray-900 dark:text-white' 
+                            : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+                        }`}
                       >
-                          <option value="">-- Select Account --</option>
-                          {customers.map(c => (
-                              <option key={c.id} value={c.id}>
-                                  {c.name} {c.phone ? `(${c.phone})` : ''} - Debt: {storeProfile.currency} {c.totalDebt}
-                              </option>
-                          ))}
-                      </select>
-                      <button 
-                        onClick={() => setIsNewCustomerOpen(true)}
-                        className="shrink-0 bg-red-600 text-white p-2.5 rounded-lg hover:bg-red-700 transition-colors shadow-md flex items-center gap-1.5"
-                        title="Add New Customer"
-                      >
-                          <UserPlus className="w-4 h-4" />
-                          <span className="text-xs font-bold">New</span>
+                        {isSelected && (
+                          <motion.div
+                            layoutId="payment-method-bg"
+                            className="absolute inset-0 bg-white dark:bg-gray-700 rounded-lg shadow-sm border border-gray-200/50 dark:border-gray-600/50"
+                            initial={false}
+                            transition={{ type: "spring", stiffness: 500, damping: 35 }}
+                          />
+                        )}
+                        <div className="relative z-10 flex flex-col items-center">
+                          <pm.icon className={`w-4 h-4 mb-1 ${isSelected ? 'text-primary-500 dark:text-primary-400' : ''}`} />
+                          <span className="text-[9px] font-semibold uppercase tracking-wider">{pm.label}</span>
+                        </div>
                       </button>
-                  </div>
-                  
-                  {/* Upfront Payment Section */}
-                  <div className="mt-2">
-                      <div className="flex justify-between items-center mb-1">
-                        <label htmlFor="debt-upfront" className="text-[9px] font-bold text-red-600 dark:text-red-400 uppercase ml-1">Upfront Payment (Optional)</label>
+                    )
+                })}
+              </div>
+
+              {/* Dynamic Payment Inputs */}
+              <div className="mb-4 min-h-[60px]">
+                <AnimatePresence mode="wait">
+                  {paymentMethod === 'Cash' && (
+                    <motion.div 
+                      key="cash"
+                      initial={{ opacity: 0, y: 5 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -5 }}
+                      transition={{ duration: 0.2 }}
+                      className="space-y-2"
+                    >
+                      <div className="relative">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 dark:text-gray-500 font-medium text-lg">{storeProfile.currency}</span>
+                        <input
+                          name="cashTendered"
+                          type="number"
+                          placeholder="Cash Received"
+                          className="w-full pl-12 pr-4 py-3 text-lg font-semibold bg-white/50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 rounded-xl focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500 outline-none transition-all placeholder:text-gray-400 dark:placeholder:text-gray-500 text-gray-900 dark:text-white shadow-sm"
+                          value={cashTendered}
+                          onChange={e => setCashTendered(e.target.value)}
+                        />
                       </div>
-                      
-                      <div className="flex gap-2">
-                        <div className="relative flex-1">
-                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs font-bold">{storeProfile.currency}</span>
+                      <div className="flex gap-2 justify-between">
+                         {quickCashAmounts.map(amt => (
+                           <button 
+                             key={amt}
+                             onClick={() => setCashTendered(amt.toString())}
+                             className="flex-1 py-2 text-xs bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 font-semibold text-gray-700 dark:text-gray-200 shadow-sm transition-transform active:scale-95"
+                           >
+                             {amt}
+                           </button>
+                         ))}
+                      </div>
+                    </motion.div>
+                  )}
+
+                  {paymentMethod === 'M-Pesa' && (
+                    <motion.div 
+                      key="mpesa"
+                      initial={{ opacity: 0, y: 5 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -5 }}
+                      transition={{ duration: 0.2 }}
+                      className="space-y-2"
+                    >
+                      <div className="relative">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-green-500/70 dark:text-green-400/70 font-medium text-lg">{storeProfile.currency}</span>
+                        <input
+                          name="mpesaTendered"
+                          type="number"
+                          placeholder="M-Pesa Amount"
+                          className="w-full pl-12 pr-4 py-3 text-lg font-semibold bg-green-50/50 dark:bg-green-900/10 border border-green-200 dark:border-green-800/50 rounded-xl focus:ring-2 focus:ring-green-500/50 focus:border-green-500 outline-none transition-all placeholder:text-green-400/70 dark:placeholder:text-green-600/70 text-green-900 dark:text-green-100 shadow-sm"
+                          value={mpesaTendered}
+                          onChange={e => setMpesaTendered(e.target.value)}
+                        />
+                      </div>
+                       <div className="flex gap-2 justify-between">
+                           <button 
+                             onClick={() => setMpesaTendered(total.toString())}
+                             className="w-full py-2.5 text-sm bg-green-100/80 dark:bg-green-900/40 text-green-800 dark:text-green-300 rounded-lg hover:bg-green-200 dark:hover:bg-green-800/60 font-semibold transition-transform active:scale-95 shadow-sm"
+                           >
+                             Full Payment ({total})
+                           </button>
+                      </div>
+                    </motion.div>
+                  )}
+
+                  {paymentMethod === 'Split' && (
+                    <motion.div 
+                      key="split"
+                      initial={{ opacity: 0, y: 5 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -5 }}
+                      transition={{ duration: 0.2 }}
+                      className="space-y-3 p-3 bg-blue-50/50 dark:bg-blue-900/10 rounded-xl border border-blue-100 dark:border-blue-800/30 shadow-sm"
+                    >
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label htmlFor="split-cash" className="text-[10px] font-semibold text-blue-600 dark:text-blue-400 uppercase block mb-1.5 ml-1">Cash</label>
+                          <div className="relative">
+                            <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-blue-400 dark:text-blue-500 font-medium text-sm">{storeProfile.currency}</span>
                             <input
-                                id="debt-upfront"
-                                type="number"
-                                placeholder="0.00"
-                                value={debtUpfront}
-                                onChange={(e) => setDebtUpfront(e.target.value)}
-                                className="w-full pl-9 p-2 border border-red-200 dark:border-red-800 rounded-lg dark:bg-black text-gray-900 dark:text-white font-bold focus:ring-2 focus:ring-red-500 outline-none text-sm"
+                              id="split-cash"
+                              name="splitCash"
+                              type="number"
+                              placeholder="0"
+                              className="w-full pl-9 pr-3 py-2 border border-blue-200 dark:border-blue-800/50 rounded-lg bg-white/80 dark:bg-gray-800/80 text-gray-900 dark:text-white font-semibold focus:ring-2 focus:ring-blue-500/50 outline-none text-base shadow-sm"
+                              value={splitCash}
+                              onChange={e => setSplitCash(e.target.value)}
                             />
+                          </div>
                         </div>
-                        {/* Method Selector */}
-                        <div className="flex bg-white dark:bg-black rounded-lg border border-red-200 dark:border-red-800 p-1">
-                            <button 
-                                onClick={() => setDebtUpfrontMethod('Cash')}
-                                className={`px-4 py-1.5 rounded-md text-[10px] font-bold transition-all flex items-center gap-1 ${debtUpfrontMethod === 'Cash' ? 'bg-red-100 dark:bg-red-900/50 text-red-700 dark:text-red-300 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
-                            >
-                                <Banknote className="w-3 h-3" /> Cash
-                            </button>
-                            <button 
-                                onClick={() => setDebtUpfrontMethod('M-Pesa')}
-                                className={`px-4 py-1.5 rounded-md text-[10px] font-bold transition-all flex items-center gap-1 ${debtUpfrontMethod === 'M-Pesa' ? 'bg-red-100 dark:bg-red-900/50 text-red-700 dark:text-red-300 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
-                            >
-                                <CreditCard className="w-3 h-3" /> M-Pesa
-                            </button>
+                        <div>
+                          <label htmlFor="split-mpesa" className="text-[10px] font-semibold text-blue-600 dark:text-blue-400 uppercase block mb-1.5 ml-1">M-Pesa</label>
+                          <div className="relative">
+                            <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-blue-400 dark:text-blue-500 font-medium text-sm">{storeProfile.currency}</span>
+                            <input
+                              id="split-mpesa"
+                              name="splitMpesa"
+                              type="number"
+                              placeholder="0"
+                              className="w-full pl-9 pr-3 py-2 border border-blue-200 dark:border-blue-800/50 rounded-lg bg-white/80 dark:bg-gray-800/80 text-gray-900 dark:text-white font-semibold focus:ring-2 focus:ring-blue-500/50 outline-none text-base shadow-sm"
+                              value={splitMpesa}
+                              onChange={e => setSplitMpesa(e.target.value)}
+                            />
+                          </div>
                         </div>
                       </div>
-                  </div>
+                      <div className="flex justify-between items-center text-xs font-semibold pt-2 border-t border-blue-200/50 dark:border-blue-800/50">
+                         <span className="text-blue-600 dark:text-blue-400">Total Paid</span>
+                         <span className={Number(splitCash) + Number(splitMpesa) >= total ? "text-emerald-600 dark:text-emerald-400 text-sm" : "text-red-500 dark:text-red-400 text-sm"}>
+                           {storeProfile.currency} {(Number(splitCash) + Number(splitMpesa)).toLocaleString()}
+                         </span>
+                      </div>
+                    </motion.div>
+                  )}
 
-                  {selectedCustomerId && (() => {
-                      const c = customers.find(cus => cus.id === selectedCustomerId);
-                      const upfront = Number(debtUpfront) || 0;
-                      const debtToAdd = Math.max(0, total - upfront);
-                      
-                      return c ? (
-                          <div className="text-xs text-red-600 dark:text-red-400 font-medium px-1 mt-2 border-t border-red-100 dark:border-red-800/50 pt-2">
-                              <div className="flex justify-between">
-                                  <span>Current Debt:</span>
-                                  <span>{storeProfile.currency} {c.totalDebt.toLocaleString()}</span>
-                              </div>
-                              <div className="flex justify-between">
-                                  <span>Adding Debt:</span>
-                                  <span>+ {storeProfile.currency} {debtToAdd.toLocaleString()}</span>
-                              </div>
-                              <div className="flex justify-between font-bold border-t border-red-200 dark:border-red-800/50 mt-1 pt-1">
-                                  <span>New Total:</span>
-                                  <span>{storeProfile.currency} {(c.totalDebt + debtToAdd).toLocaleString()}</span>
-                              </div>
-                          </div>
-                      ) : null;
-                  })()}
-                </div>
-            )}
-            {paymentMethod === 'Credit' && (
-               <div className="space-y-2 animate-fade-in p-3 bg-purple-50 dark:bg-purple-900/10 rounded-xl border border-purple-100 dark:border-purple-900/20">
-                  <div className="flex gap-2 mb-2 items-center">
-                      <select 
-                        value={selectedCustomerId}
-                        onChange={(e) => setSelectedCustomerId(e.target.value)}
-                        className="flex-1 w-full min-w-0 p-2.5 text-sm border border-purple-200 dark:border-purple-800 rounded-lg dark:bg-black text-gray-900 dark:text-white font-medium focus:ring-2 focus:ring-purple-500 outline-none"
+                  {paymentMethod === 'Debt' && (
+                      <motion.div 
+                        key="debt"
+                        initial={{ opacity: 0, y: 5 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -5 }}
+                        transition={{ duration: 0.2 }}
+                        className="space-y-3 p-3 bg-red-50/50 dark:bg-red-900/10 rounded-xl border border-red-100 dark:border-red-800/30 shadow-sm"
                       >
-                          <option value="">-- Select Account --</option>
-                          {customers.map(c => (
-                              <option key={c.id} value={c.id}>
-                                  {c.name} {c.phone ? `(${c.phone})` : ''} - Bal: {storeProfile.currency} {c.creditBalance || 0}
-                              </option>
-                          ))}
-                      </select>
-                  </div>
-                  
-                  {selectedCustomerId && (() => {
-                      const customer = customers.find(c => c.id === selectedCustomerId);
-                      const balance = customer?.creditBalance || 0;
-                      const isSufficient = balance >= total;
-                      return (
-                          <div className={`p-3 rounded-lg border text-sm font-bold flex justify-between items-center ${isSufficient ? 'bg-green-50 border-green-200 text-green-700' : 'bg-red-50 border-red-200 text-red-700'}`}>
-                              <span>Available Credit: {storeProfile.currency} {balance.toLocaleString()}</span>
-                              {!isSufficient && <span className="text-xs uppercase bg-red-200 px-2 py-1 rounded">Insufficient</span>}
-                          </div>
-                      );
-                  })()}
-               </div>
-            )}
-          </div>
+                        {/* Upfront Payment Section */}
+                        <div>
+                            <div className="flex justify-between items-center mb-1.5">
+                              <label htmlFor="debt-upfront" className="text-[10px] font-semibold text-red-600 dark:text-red-400 uppercase ml-1">Upfront Payment</label>
+                            </div>
+                            
+                            <div className="flex flex-col gap-2">
+                              <div className="relative w-full">
+                                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-red-400 dark:text-red-500 font-medium text-sm">{storeProfile.currency}</span>
+                                  <input
+                                      id="debt-upfront"
+                                      type="number"
+                                      placeholder="0.00"
+                                      value={debtUpfront}
+                                      onChange={(e) => setDebtUpfront(e.target.value)}
+                                      className="w-full pl-10 pr-3 py-2.5 border border-red-200 dark:border-red-800/50 rounded-lg bg-white/80 dark:bg-gray-800/80 text-gray-900 dark:text-white font-semibold focus:ring-2 focus:ring-red-500/50 outline-none text-base shadow-sm"
+                                  />
+                              </div>
+                              {/* Method Selector */}
+                              <div className="flex bg-white/60 dark:bg-gray-800/60 rounded-lg border border-red-200/50 dark:border-red-800/50 p-1">
+                                  <button 
+                                      onClick={() => setDebtUpfrontMethod('Cash')}
+                                      className={`flex-1 py-2 rounded-md text-xs font-semibold transition-all flex items-center justify-center gap-1.5 ${debtUpfrontMethod === 'Cash' ? 'bg-white dark:bg-gray-700 text-red-600 dark:text-red-400 shadow-sm border border-red-100 dark:border-red-800/50' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'}`}
+                                  >
+                                      <Banknote className="w-3.5 h-3.5" /> Cash
+                                  </button>
+                                  <button 
+                                      onClick={() => setDebtUpfrontMethod('M-Pesa')}
+                                      className={`flex-1 py-2 rounded-md text-xs font-semibold transition-all flex items-center justify-center gap-1.5 ${debtUpfrontMethod === 'M-Pesa' ? 'bg-white dark:bg-gray-700 text-red-600 dark:text-red-400 shadow-sm border border-red-100 dark:border-red-800/50' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'}`}
+                                  >
+                                      <CreditCard className="w-3.5 h-3.5" /> M-Pesa
+                                  </button>
+                              </div>
+                            </div>
+                        </div>
+                     </motion.div>
+                  )}
+                  {paymentMethod === 'Credit' && (
+                     <motion.div 
+                        key="credit"
+                        initial={{ opacity: 0, y: 5 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -5 }}
+                        transition={{ duration: 0.2 }}
+                        className="p-3 bg-purple-50/50 dark:bg-purple-900/10 rounded-xl border border-purple-100 dark:border-purple-800/30 shadow-sm"
+                      >
+                        {selectedCustomerId && (() => {
+                            const customer = customers.find(c => c.id === selectedCustomerId);
+                            const balance = customer?.creditBalance || 0;
+                            const isSufficient = balance >= total;
+                            return (
+                                <div className={`p-3 rounded-lg border text-sm font-semibold flex justify-between items-center bg-white/80 dark:bg-gray-800/80 ${isSufficient ? 'border-green-200 dark:border-green-800/50 text-green-700 dark:text-green-400' : 'border-red-200 dark:border-red-800/50 text-red-600 dark:text-red-400'}`}>
+                                    <div className="flex flex-col">
+                                      <span className="text-[10px] uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-0.5">Available Credit</span>
+                                      <span>{storeProfile.currency} {balance.toLocaleString()}</span>
+                                    </div>
+                                    {!isSufficient && <span className="text-[10px] uppercase bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400 px-2 py-1 rounded-md font-bold">Insufficient</span>}
+                                </div>
+                            );
+                        })()}
+                        {!selectedCustomerId && (
+                            <div className="py-4 text-sm text-purple-600 dark:text-purple-400 font-medium text-center bg-white/50 dark:bg-gray-800/50 rounded-lg border border-purple-100 dark:border-purple-800/30">
+                                Select a customer above to use credit.
+                            </div>
+                        )}
+                     </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
 
-          <button
-            onClick={handleCheckout}
-            disabled={cart.length === 0 || ((paymentMethod === 'Debt' || paymentMethod === 'Credit') && !selectedCustomerId)}
-            className={`w-full font-black py-3.5 rounded-xl shadow-xl transition-all transform active:scale-[0.98] flex items-center justify-center gap-3 text-base ${
-               cart.length === 0 || ((paymentMethod === 'Debt' || paymentMethod === 'Credit') && !selectedCustomerId)
-               ? 'bg-gray-300 text-gray-500 cursor-not-allowed shadow-none'
-               : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-900/20'
-            }`}
-          >
-            {paymentMethod === 'Debt' ? 'Record Transaction' : 'Complete Sale'}
-            <ArrowRight className="w-5 h-5" />
-          </button>
+              <button
+                onClick={handleCheckout}
+                disabled={cart.length === 0 || ((paymentMethod === 'Debt' || paymentMethod === 'Credit') && !selectedCustomerId)}
+                className={`w-full font-bold py-3.5 rounded-xl shadow-sm transition-all transform active:scale-[0.98] flex items-center justify-center gap-2 text-base ${
+                   cart.length === 0 || ((paymentMethod === 'Debt' || paymentMethod === 'Credit') && !selectedCustomerId)
+                   ? 'bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-500 cursor-not-allowed border border-gray-200 dark:border-gray-700'
+                   : 'bg-gray-900 dark:bg-white text-white dark:text-gray-900 hover:bg-gray-800 dark:hover:bg-gray-100 shadow-md'
+                }`}
+              >
+                {paymentMethod === 'Debt' ? 'Record Transaction' : 'Complete Sale'}
+                <ArrowRight className="w-5 h-5" />
+              </button>
+          </div>
         </div>
       </div>
 
