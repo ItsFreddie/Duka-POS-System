@@ -9,6 +9,7 @@ export interface Product {
   image: string; // Base64 string
   measurementUnit?: string; // 'pcs', 'L', 'kg', 'm' etc.
   expiryDate?: string; // ISO Date string YYYY-MM-DD
+  order?: number; // For custom sorting
 }
 
 export interface CartItem extends Product {

@@ -336,6 +336,8 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
   const handleDragEnd = (result: DropResult) => {
     if (!result.destination) return;
     const { source, destination, type } = result;
+    
+    setSortBy('custom');
 
     if (type === 'category') {
       const newCategories = Array.from(categories);
@@ -346,19 +348,45 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
       newCategories.forEach(cat => {
         newProducts.push(...products.filter(p => p.category === cat));
       });
-      // Add any products that might not have a category in newCategories (shouldn't happen)
+      // Add any products that might not have a category in newCategories (e.g. when searching)
+      const remainingProducts = products.filter(p => !newCategories.includes(p.category));
+      newProducts.push(...remainingProducts);
       onReorderProducts(newProducts);
     } else if (type === 'product') {
       const sourceCategory = source.droppableId;
       const destCategory = destination.droppableId;
 
-      const sourceCategoryProducts = products.filter(p => p.category === sourceCategory);
-      const draggedProduct = sourceCategoryProducts[source.index];
+      // Use processedProducts to get the correct dragged product based on the rendered list
+      const renderedSourceProducts = sortProducts(processedProducts.filter(p => p.category === sourceCategory));
+      const draggedProduct = renderedSourceProducts[source.index];
+      
+      if (!draggedProduct) return;
 
       if (sourceCategory === destCategory) {
         const categoryProducts = products.filter(p => p.category === sourceCategory);
-        categoryProducts.splice(source.index, 1);
-        categoryProducts.splice(destination.index, 0, draggedProduct);
+        
+        // Find the actual index of the dragged product in the full category products list
+        const actualSourceIndex = categoryProducts.findIndex(p => p.id === draggedProduct.id);
+        if (actualSourceIndex === -1) return;
+
+        categoryProducts.splice(actualSourceIndex, 1);
+        
+        // Find the actual destination index. If dropping at the end of the filtered list, put it at the end of the full list.
+        // Otherwise, put it before the item that is currently at the destination index in the filtered list.
+        const renderedDestProducts = sortProducts(processedProducts.filter(p => p.category === destCategory));
+        let actualDestIndex = categoryProducts.length; // Default to end
+        
+        if (destination.index < renderedDestProducts.length) {
+            const targetProduct = renderedDestProducts[destination.index];
+            if (targetProduct && targetProduct.id !== draggedProduct.id) {
+                const targetActualIndex = categoryProducts.findIndex(p => p.id === targetProduct.id);
+                if (targetActualIndex !== -1) {
+                    actualDestIndex = targetActualIndex;
+                }
+            }
+        }
+
+        categoryProducts.splice(actualDestIndex, 0, draggedProduct);
 
         const finalProducts: Product[] = [];
         categories.forEach(cat => {
@@ -368,15 +396,34 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
             finalProducts.push(...products.filter(p => p.category === cat));
           }
         });
+        const remainingProducts = products.filter(p => !categories.includes(p.category));
+        finalProducts.push(...remainingProducts);
         onReorderProducts(finalProducts);
       } else {
         const updatedProduct = { ...draggedProduct, category: destCategory };
         
         const sourceCatProducts = products.filter(p => p.category === sourceCategory);
-        sourceCatProducts.splice(source.index, 1);
+        const actualSourceIndex = sourceCatProducts.findIndex(p => p.id === draggedProduct.id);
+        if (actualSourceIndex !== -1) {
+            sourceCatProducts.splice(actualSourceIndex, 1);
+        }
 
         const destCatProducts = products.filter(p => p.category === destCategory);
-        destCatProducts.splice(destination.index, 0, updatedProduct);
+        
+        const renderedDestProducts = sortProducts(processedProducts.filter(p => p.category === destCategory));
+        let actualDestIndex = destCatProducts.length;
+        
+        if (destination.index < renderedDestProducts.length) {
+            const targetProduct = renderedDestProducts[destination.index];
+            if (targetProduct) {
+                const targetActualIndex = destCatProducts.findIndex(p => p.id === targetProduct.id);
+                if (targetActualIndex !== -1) {
+                    actualDestIndex = targetActualIndex;
+                }
+            }
+        }
+        
+        destCatProducts.splice(actualDestIndex, 0, updatedProduct);
 
         const finalProducts: Product[] = [];
         categories.forEach(cat => {
@@ -388,6 +435,8 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
             finalProducts.push(...products.filter(p => p.category === cat));
           }
         });
+        const remainingProducts = products.filter(p => !categories.includes(p.category));
+        finalProducts.push(...remainingProducts);
         onReorderProducts(finalProducts);
       }
     }

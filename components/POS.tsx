@@ -337,13 +337,16 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
         const customer = customers.find(c => c.id === selectedCustomerId);
         if (!customer) return;
 
-        if ((customer.creditBalance || 0) < total) {
-            alert(`Insufficient credit balance! Available: ${storeProfile.currency} ${customer.creditBalance || 0}`);
-            return;
+        const availableCredit = customer.creditBalance || 0;
+
+        if (availableCredit < total) {
+            transactionDetails.amountPaid = availableCredit;
+            transactionDetails.status = 'Pending Debt';
+        } else {
+            transactionDetails.amountPaid = total;
+            transactionDetails.status = 'Completed';
         }
 
-        transactionDetails.amountPaid = total;
-        transactionDetails.status = 'Completed';
         transactionDetails.customerId = selectedCustomerId;
         transactionDetails.customerName = customer.name;
         transactionDetails.customerPhone = customer.phone || '';
@@ -1182,12 +1185,25 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
                             const balance = customer?.creditBalance || 0;
                             const isSufficient = balance >= total;
                             return (
-                                <div className={`p-3 rounded-lg border text-sm font-semibold flex justify-between items-center bg-white/80 dark:bg-gray-800/80 ${isSufficient ? 'border-green-200 dark:border-green-800/50 text-green-700 dark:text-green-400' : 'border-red-200 dark:border-red-800/50 text-red-600 dark:text-red-400'}`}>
-                                    <div className="flex flex-col">
-                                      <span className="text-[10px] uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-0.5">Available Credit</span>
-                                      <span>{storeProfile.currency} {balance.toLocaleString()}</span>
+                                <div className="flex flex-col gap-2">
+                                    <div className="p-3 rounded-lg border text-sm font-semibold flex justify-between items-center bg-white/80 dark:bg-gray-800/80 border-green-200 dark:border-green-800/50 text-green-700 dark:text-green-400">
+                                        <div className="flex flex-col">
+                                          <span className="text-[10px] uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-0.5">Available Credit</span>
+                                          <span>{storeProfile.currency} {balance.toLocaleString()}</span>
+                                        </div>
+                                        <span className="text-[10px] uppercase bg-green-100 dark:bg-green-900/40 text-green-600 dark:text-green-400 px-2 py-1 rounded-md font-bold">
+                                            {isSufficient ? 'Applied' : 'Used'}
+                                        </span>
                                     </div>
-                                    {!isSufficient && <span className="text-[10px] uppercase bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400 px-2 py-1 rounded-md font-bold">Insufficient</span>}
+                                    {!isSufficient && (
+                                        <div className="p-3 rounded-lg border text-sm font-semibold flex justify-between items-center bg-white/80 dark:bg-gray-800/80 border-red-200 dark:border-red-800/50 text-red-600 dark:text-red-400">
+                                            <div className="flex flex-col">
+                                              <span className="text-[10px] uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-0.5">Remaining Debt</span>
+                                              <span>{storeProfile.currency} {(total - balance).toLocaleString()}</span>
+                                            </div>
+                                            <span className="text-[10px] uppercase bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400 px-2 py-1 rounded-md font-bold">To Record</span>
+                                        </div>
+                                    )}
                                 </div>
                             );
                         })()}

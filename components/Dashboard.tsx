@@ -3,6 +3,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, PieChart, Pie, Cell, Legend, ComposedChart, Line } from 'recharts';
 import { TrendingUp, DollarSign, AlertCircle, ShoppingBag, Sparkles, Loader2, Target, Edit3, PieChart as PieChartIcon, CreditCard, FileDown, Calendar, Wallet, Banknote, TrendingDown, ArrowRight, AlertTriangle, X, Check, AlertOctagon, Package, Activity, ChevronDown, Filter } from 'lucide-react';
 import { Product, Transaction, StoreProfile, AppView, ShiftRecord, StockLog, Customer } from '../types';
+import * as db from '../utils/db';
 import { getBusinessInsights } from '../services/geminiService';
 import confetti from 'canvas-confetti';
 import html2canvas from 'html2canvas';
@@ -19,8 +20,8 @@ interface DashboardProps {
   onUpdateProfile?: (profile: StoreProfile) => void;
 }
 
-const COLORS = ['#0ea5e9', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#6366f1', '#14b8a6'];
-const PIE_COLORS = ['#3b82f6', '#10b981', '#ef4444', '#f59e0b']; // Cash(Blue), Mpesa(Green), Credit(Red), Split(Orange)
+const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#06b6d4', '#f43f5e', '#84cc16'];
+const PIE_COLORS = ['#3b82f6', '#10b981', '#ef4444', '#f59e0b', '#8b5cf6']; // Cash(Blue), Mpesa(Green), Credit(Red), Split(Orange), Other(Violet)
 
 export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, storeProfile, currentShift, stockLogs, customers, onNavigate, onUpdateProfile }) => {
   const [insight, setInsight] = useState<string | null>(null);
@@ -30,7 +31,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
   const [viewDetails, setViewDetails] = useState<{ title: string; items: Product[] } | null>(null);
   const [selectedDayFilter, setSelectedDayFilter] = useState<string>('All');
   const [spendingMetric, setSpendingMetric] = useState<'spent' | 'points'>('spent');
+  const [shifts, setShifts] = useState<ShiftRecord[]>([]);
   const dashboardRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    db.getAllShifts().then(setShifts).catch(console.error);
+  }, []);
 
   // --- 1. Daily Financial Overview Calculation ---
   const today = new Date().toISOString().split('T')[0];
@@ -461,6 +467,34 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
       }));
   }, [customers, spendingMetric]);
 
+  const expensesTrendData = useMemo(() => {
+    if (!shifts || shifts.length === 0) return [];
+    
+    // Group expenses by date
+    const expensesByDate: Record<string, number> = {};
+    
+    shifts.forEach(shift => {
+      const date = shift.date;
+      if (!expensesByDate[date]) expensesByDate[date] = 0;
+      
+      const shiftExpenses = shift.expenses?.reduce((sum, exp) => sum + exp.amount, 0) || 0;
+      expensesByDate[date] += shiftExpenses;
+    });
+    
+    // Sort dates and take the last 7 or 14 days
+    const sortedDates = Object.keys(expensesByDate).sort();
+    const recentDates = sortedDates.slice(-14); // Last 14 days with shifts
+    
+    return recentDates.map(date => {
+      const d = new Date(date);
+      return {
+        name: d.toLocaleDateString('en-KE', { weekday: 'short', day: 'numeric' }),
+        fullDate: date,
+        amount: expensesByDate[date]
+      };
+    });
+  }, [shifts]);
+
   const handleExportPDF = async () => {
     if (!dashboardRef.current) return;
     setIsExporting(true);
@@ -797,8 +831,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
          </div>
       </div>
 
-      {/* 4. CHARTS ROW (Trends & Top Items) */}
+      {/* 4. MAIN CHARTS & LISTS */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+         {/* LEFT COLUMN: Large Charts */}
          <div className="lg:col-span-2 flex flex-col gap-6">
              {/* Sales Chart */}
              <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700">
@@ -817,16 +852,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
                         <ComposedChart data={chartData}>
                             <defs>
                             <linearGradient id="colorSales" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.3}/>
-                                <stop offset="95%" stopColor="#0ea5e9" stopOpacity={0}/>
+                                <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.4}/>
+                                <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
                             </linearGradient>
                             </defs>
                             <CartesianGrid strokeDasharray="3 3" opacity={0.1} vertical={false} />
                             <XAxis dataKey="name" stroke="#9ca3af" fontSize={10} tickLine={false} axisLine={false} dy={10} interval={salesView === 'monthly' ? 2 : 0} />
                             <YAxis stroke="#9ca3af" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(value) => `${value}`} />
                             <Tooltip content={<SalesTooltip />} />
-                            <Area type="monotone" dataKey="sales" stroke="#0ea5e9" strokeWidth={2} fillOpacity={1} fill="url(#colorSales)" name="Sales" />
-                            <Line type="monotone" dataKey="prevSales" stroke="#94a3b8" strokeWidth={2} strokeDasharray="5 5" dot={false} name="Previous Sales" />
+                            <Area type="monotone" dataKey="sales" stroke="#3b82f6" strokeWidth={3} fillOpacity={1} fill="url(#colorSales)" name="Sales" />
+                            <Line type="monotone" dataKey="prevSales" stroke="#94a3b8" strokeWidth={3} strokeDasharray="5 5" dot={false} name="Previous Sales" />
                         </ComposedChart>
                     </ResponsiveContainer>
                 </div>
@@ -849,7 +884,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
                         <AreaChart data={chartData}>
                             <defs>
                             <linearGradient id="colorProfit" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
+                                <stop offset="5%" stopColor="#10b981" stopOpacity={0.4}/>
                                 <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
                             </linearGradient>
                             </defs>
@@ -857,10 +892,81 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
                             <XAxis dataKey="name" stroke="#9ca3af" fontSize={10} tickLine={false} axisLine={false} dy={10} interval={salesView === 'monthly' ? 2 : 0} />
                             <YAxis stroke="#9ca3af" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(value) => `${value}`} />
                             <Tooltip contentStyle={{ backgroundColor: '#111827', borderColor: '#374151', color: '#fff', borderRadius: '12px' }} itemStyle={{ color: '#fff' }} />
-                            <Area type="monotone" dataKey="profit" stroke="#10b981" strokeWidth={2} fillOpacity={1} fill="url(#colorProfit)" name="Profit" />
+                            <Area type="monotone" dataKey="profit" stroke="#10b981" strokeWidth={3} fillOpacity={1} fill="url(#colorProfit)" name="Profit" />
                         </AreaChart>
                     </ResponsiveContainer>
                 </div>
+             </div>
+
+             {/* Hourly Activity Pattern */}
+             <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700">
+                 <div className="flex flex-col sm:flex-row justify-between items-center mb-6 gap-4">
+                     <div>
+                         <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                             <Activity className="w-5 h-5 text-orange-500" /> Hourly Activity Pattern
+                         </h3>
+                         <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Average performance by hour of day</p>
+                     </div>
+                     <div className="relative min-w-[160px]">
+                         <select
+                             value={selectedDayFilter}
+                             onChange={(e) => setSelectedDayFilter(e.target.value)}
+                             className="w-full appearance-none pl-4 pr-10 py-2.5 bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-xl text-sm font-bold text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-primary-500 cursor-pointer shadow-sm"
+                         >
+                             <option value="All">All Days (Avg.)</option>
+                             {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].map(day => (
+                                 <option key={day} value={day}>{day}</option>
+                             ))}
+                         </select>
+                         <Filter className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 pointer-events-none" />
+                     </div>
+                 </div>
+                 <div className="h-[400px] w-full">
+                     <ResponsiveContainer width="100%" height="100%">
+                         <ComposedChart data={hourlyPerformanceData} margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
+                             <defs>
+                                 <linearGradient id="colorHourlySales" x1="0" y1="0" x2="0" y2="1">
+                                     <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.8}/>
+                                     <stop offset="95%" stopColor="#3b82f6" stopOpacity={0.2}/>
+                                 </linearGradient>
+                             </defs>
+                             <CartesianGrid strokeDasharray="3 3" opacity={0.1} vertical={false} />
+                             <XAxis 
+                               dataKey="name" 
+                               stroke="#9ca3af" 
+                               fontSize={10} 
+                               tickLine={false} 
+                               axisLine={false} 
+                               dy={10} 
+                             />
+                             {/* Left Axis: Sales */}
+                             <YAxis 
+                               yAxisId="left" 
+                               stroke="#3b82f6" 
+                               fontSize={10} 
+                               tickLine={false} 
+                               axisLine={false}
+                               tickFormatter={(val) => `${(val/1000).toFixed(0)}k`} 
+                             />
+                             {/* Right Axis: Transactions (Count) */}
+                             <YAxis 
+                               yAxisId="right" 
+                               orientation="right" 
+                               stroke="#f59e0b" 
+                               fontSize={10} 
+                               tickLine={false} 
+                               axisLine={false}
+                             />
+                             
+                             <Tooltip content={<HourlyTooltip />} />
+                             <Legend iconType="circle" />
+                             
+                             <Bar yAxisId="left" dataKey="avgSales" name="Avg Sales (KES)" fill="url(#colorHourlySales)" radius={[4, 4, 0, 0]} barSize={20} />
+                             <Line yAxisId="right" type="monotone" dataKey="avgTxns" name="Avg Transactions" stroke="#f59e0b" strokeWidth={3} dot={{r: 3, fill:'#f59e0b'}} activeDot={{ r: 6 }} />
+                             <Line yAxisId="left" type="monotone" dataKey="atv" name="Avg Txn Value (KES)" stroke="#10b981" strokeWidth={3} strokeDasharray="5 5" dot={false} />
+                         </ComposedChart>
+                     </ResponsiveContainer>
+                 </div>
              </div>
 
              {/* Inventory Value Trend Chart */}
@@ -880,7 +986,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
                         <AreaChart data={inventoryTrendData}>
                             <defs>
                             <linearGradient id="colorInventory" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.3}/>
+                                <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.4}/>
                                 <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0}/>
                             </linearGradient>
                             </defs>
@@ -892,13 +998,45 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
                                 itemStyle={{ color: '#fff' }}
                                 formatter={(value: number) => [`${storeProfile.currency} ${value.toLocaleString()}`, 'Value']}
                             />
-                            <Area type="monotone" dataKey="value" stroke="#8b5cf6" strokeWidth={2} fillOpacity={1} fill="url(#colorInventory)" name="Value" />
+                            <Area type="monotone" dataKey="value" stroke="#8b5cf6" strokeWidth={3} fillOpacity={1} fill="url(#colorInventory)" name="Value" />
                         </AreaChart>
                     </ResponsiveContainer>
                 </div>
              </div>
+
+             {/* Expenses Trend Chart */}
+             <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700">
+                 <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2 mb-6">
+                    <TrendingDown className="w-5 h-5 text-red-500" /> Expenses Trend
+                 </h3>
+                 <div className="h-64 w-full">
+                     {expensesTrendData.length > 0 ? (
+                         <ResponsiveContainer width="100%" height="100%">
+                             <AreaChart data={expensesTrendData}>
+                                 <defs>
+                                     <linearGradient id="colorExpense" x1="0" y1="0" x2="0" y2="1">
+                                         <stop offset="5%" stopColor="#ef4444" stopOpacity={0.4}/>
+                                         <stop offset="95%" stopColor="#ef4444" stopOpacity={0}/>
+                                     </linearGradient>
+                                 </defs>
+                                 <CartesianGrid strokeDasharray="3 3" opacity={0.1} vertical={false} />
+                                 <XAxis dataKey="name" stroke="#9ca3af" fontSize={10} tickLine={false} axisLine={false} dy={10} />
+                                 <YAxis stroke="#9ca3af" fontSize={10} tickLine={false} axisLine={false} tickFormatter={(val) => `${(val/1000).toFixed(0)}k`} />
+                                 <Tooltip contentStyle={{ backgroundColor: '#111827', borderColor: '#374151', color: '#fff', borderRadius: '12px' }} itemStyle={{ color: '#fff' }} formatter={(value: number) => [`${storeProfile.currency} ${value.toLocaleString()}`, 'Expenses']} />
+                                 <Area type="monotone" dataKey="amount" stroke="#ef4444" strokeWidth={3} fillOpacity={1} fill="url(#colorExpense)" name="Expenses" />
+                             </AreaChart>
+                         </ResponsiveContainer>
+                     ) : (
+                         <div className="h-full flex flex-col items-center justify-center text-gray-400 text-sm">
+                             <Banknote className="w-8 h-8 mb-2 opacity-20" />
+                             No expense data available
+                         </div>
+                     )}
+                 </div>
+             </div>
          </div>
 
+         {/* RIGHT COLUMN: Lists & Pie Charts */}
          <div className="flex flex-col gap-6">
              {/* Best Sellers List */}
              <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700 flex flex-col">
@@ -1020,139 +1158,71 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
                      </div>
                  )}
              </div>
+
+             {/* Payment Methods Pie */}
+             <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700">
+                 <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2 mb-6">
+                    <Wallet className="w-5 h-5 text-purple-500" /> Revenue Source (Today)
+                 </h3>
+                 <div className="h-[400px] w-full flex items-center justify-center">
+                     {paymentMethodData.length > 0 ? (
+                        <ResponsiveContainer width="100%" height="100%">
+                            <PieChart>
+                                <Pie
+                                    data={paymentMethodData}
+                                    cx="50%"
+                                    cy="45%"
+                                    innerRadius={60}
+                                    outerRadius={80}
+                                    paddingAngle={5}
+                                    dataKey="value"
+                                >
+                                    {paymentMethodData.map((entry, index) => (
+                                        <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
+                                    ))}
+                                </Pie>
+                                <Tooltip contentStyle={{ backgroundColor: '#111827', borderColor: '#374151', color: '#fff', borderRadius: '12px' }} itemStyle={{ color: '#fff' }} />
+                                <Legend verticalAlign="bottom" iconType="circle" wrapperStyle={{ paddingTop: '20px' }} />
+                            </PieChart>
+                        </ResponsiveContainer>
+                     ) : (
+                        <div className="text-gray-400 text-sm">No payment data for today</div>
+                     )}
+                 </div>
+             </div>
+
+             {/* Category Sales Pie */}
+             <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700">
+                 <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2 mb-6">
+                    <PieChartIcon className="w-5 h-5 text-orange-500" /> Category Distribution
+                 </h3>
+                 <div className="h-[400px] w-full flex items-center justify-center">
+                     {categoryData.length > 0 ? (
+                        <ResponsiveContainer width="100%" height="100%">
+                            <PieChart>
+                                <Pie
+                                    data={categoryData}
+                                    cx="50%"
+                                    cy="45%"
+                                    innerRadius={60}
+                                    outerRadius={80}
+                                    paddingAngle={5}
+                                    dataKey="value"
+                                >
+                                    {categoryData.map((entry, index) => (
+                                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                    ))}
+                                </Pie>
+                                <Tooltip contentStyle={{ backgroundColor: '#111827', borderColor: '#374151', color: '#fff', borderRadius: '12px' }} itemStyle={{ color: '#fff' }} />
+                                <Legend verticalAlign="bottom" iconType="circle" wrapperStyle={{ paddingTop: '20px' }} />
+                            </PieChart>
+                        </ResponsiveContainer>
+                     ) : (
+                        <div className="text-gray-400 text-sm">No sales data for this period</div>
+                     )}
+                 </div>
+             </div>
          </div>
-      </div>
-
-      {/* 5. HOURLY PERFORMANCE DASHBOARD */}
-      <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700">
-          <div className="flex flex-col sm:flex-row justify-between items-center mb-6 gap-4">
-              <div>
-                  <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2">
-                      <Activity className="w-5 h-5 text-orange-500" /> Hourly Activity Pattern
-                  </h3>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Average performance by hour of day</p>
-              </div>
-              <div className="relative min-w-[160px]">
-                  <select
-                      value={selectedDayFilter}
-                      onChange={(e) => setSelectedDayFilter(e.target.value)}
-                      className="w-full appearance-none pl-4 pr-10 py-2.5 bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-xl text-sm font-bold text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-primary-500 cursor-pointer shadow-sm"
-                  >
-                      <option value="All">All Days (Avg.)</option>
-                      {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].map(day => (
-                          <option key={day} value={day}>{day}</option>
-                      ))}
-                  </select>
-                  <Filter className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 pointer-events-none" />
-              </div>
-          </div>
-          <div className="h-[400px] w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                  <ComposedChart data={hourlyPerformanceData} margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
-                      <CartesianGrid strokeDasharray="3 3" opacity={0.1} vertical={false} />
-                      <XAxis 
-                        dataKey="name" 
-                        stroke="#9ca3af" 
-                        fontSize={10} 
-                        tickLine={false} 
-                        axisLine={false} 
-                        dy={10} 
-                      />
-                      {/* Left Axis: Sales */}
-                      <YAxis 
-                        yAxisId="left" 
-                        stroke="#0ea5e9" 
-                        fontSize={10} 
-                        tickLine={false} 
-                        axisLine={false}
-                        tickFormatter={(val) => `${(val/1000).toFixed(0)}k`} 
-                      />
-                      {/* Right Axis: Transactions (Count) */}
-                      <YAxis 
-                        yAxisId="right" 
-                        orientation="right" 
-                        stroke="#f59e0b" 
-                        fontSize={10} 
-                        tickLine={false} 
-                        axisLine={false}
-                      />
-                      
-                      <Tooltip content={<HourlyTooltip />} />
-                      <Legend iconType="circle" />
-                      
-                      <Bar yAxisId="left" dataKey="avgSales" name="Avg Sales (KES)" fill="#0ea5e9" radius={[4, 4, 0, 0]} barSize={20} fillOpacity={0.8} />
-                      <Line yAxisId="right" type="monotone" dataKey="avgTxns" name="Avg Transactions" stroke="#f59e0b" strokeWidth={3} dot={{r: 3, fill:'#f59e0b'}} activeDot={{ r: 6 }} />
-                      <Line yAxisId="left" type="monotone" dataKey="atv" name="Avg Txn Value (KES)" stroke="#10b981" strokeWidth={2} strokeDasharray="5 5" dot={false} />
-                  </ComposedChart>
-              </ResponsiveContainer>
-          </div>
-      </div>
-
-      {/* 6. PIE CHARTS ROW */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Payment Methods Pie */}
-          <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700">
-             <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2 mb-6">
-                <Wallet className="w-5 h-5 text-purple-500" /> Revenue Source (Today)
-             </h3>
-             <div className="h-64 w-full flex items-center justify-center">
-                 {paymentMethodData.length > 0 ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                        <PieChart>
-                            <Pie
-                                data={paymentMethodData}
-                                cx="50%"
-                                cy="50%"
-                                innerRadius={60}
-                                outerRadius={80}
-                                paddingAngle={5}
-                                dataKey="value"
-                            >
-                                {paymentMethodData.map((entry, index) => (
-                                    <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
-                                ))}
-                            </Pie>
-                            <Tooltip contentStyle={{ backgroundColor: '#111827', borderColor: '#374151', color: '#fff', borderRadius: '12px' }} itemStyle={{ color: '#fff' }} />
-                            <Legend verticalAlign="bottom" height={36} iconType="circle" />
-                        </PieChart>
-                    </ResponsiveContainer>
-                 ) : (
-                    <div className="text-gray-400 text-sm">No payment data for today</div>
-                 )}
-             </div>
-          </div>
-
-          {/* Category Sales Pie */}
-          <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700">
-             <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2 mb-6">
-                <PieChartIcon className="w-5 h-5 text-orange-500" /> Category Distribution
-             </h3>
-             <div className="h-64 w-full flex items-center justify-center">
-                 {categoryData.length > 0 ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                        <PieChart>
-                            <Pie
-                                data={categoryData}
-                                cx="50%"
-                                cy="50%"
-                                innerRadius={60}
-                                outerRadius={80}
-                                paddingAngle={5}
-                                dataKey="value"
-                            >
-                                {categoryData.map((entry, index) => (
-                                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                                ))}
-                            </Pie>
-                            <Tooltip contentStyle={{ backgroundColor: '#111827', borderColor: '#374151', color: '#fff', borderRadius: '12px' }} itemStyle={{ color: '#fff' }} />
-                            <Legend verticalAlign="bottom" height={36} iconType="circle" />
-                        </PieChart>
-                    </ResponsiveContainer>
-                 ) : (
-                    <div className="text-gray-400 text-sm">No sales data for this period</div>
-                 )}
-             </div>
-          </div>
       </div>
 
       {/* 7. DETAILS MODAL (For Slow Moving & Low Stock Cards) */}

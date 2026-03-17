@@ -522,11 +522,13 @@ const App = () => {
         ]);
 
         if (loadedProducts.length > 0) {
-            setProducts(loadedProducts);
+            const sortedProducts = loadedProducts.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+            setProducts(sortedProducts);
         } else {
             // Seed initial products if DB is empty
-            setProducts(INITIAL_PRODUCTS);
-            loadedProducts.forEach(p => db.saveProduct(p)); 
+            const initialWithOrder = INITIAL_PRODUCTS.map((p, index) => ({ ...p, order: index }));
+            setProducts(initialWithOrder);
+            initialWithOrder.forEach(p => db.saveProduct(p)); 
         }
 
         // Sort transactions by date desc for UI
@@ -609,7 +611,16 @@ const App = () => {
             
             // Handle Credit
             if (transaction.paymentMethod === 'Credit') {
-                 updatedCustomer.creditBalance = Math.max(0, (updatedCustomer.creditBalance || 0) - transaction.total);
+                 const creditAvailable = updatedCustomer.creditBalance || 0;
+                 if (creditAvailable < transaction.total) {
+                     // Use all available credit, rest becomes debt
+                     const debtAdded = transaction.total - creditAvailable;
+                     updatedCustomer.totalDebt += debtAdded;
+                     updatedCustomer.creditBalance = 0;
+                 } else {
+                     // Sufficient credit
+                     updatedCustomer.creditBalance = creditAvailable - transaction.total;
+                 }
             }
 
             // Handle Loyalty & Total Spent (All methods)
@@ -913,31 +924,33 @@ const App = () => {
   };
 
   const handleAddProduct = async (p: Product) => {
-    setProducts([...products, p]);
-    await db.saveProduct(p);
+    const newProduct = { ...p, order: products.length };
+    setProducts([...products, newProduct]);
+    await db.saveProduct(newProduct);
 
     // Log Stock Creation
-    if (p.stock > 0) {
+    if (newProduct.stock > 0) {
         const log: StockLog = {
             id: generateId(),
-            productId: p.id,
-            productName: p.name,
-            quantityChanged: p.stock,
-            newStockLevel: p.stock,
+            productId: newProduct.id,
+            productName: newProduct.name,
+            quantityChanged: newProduct.stock,
+            newStockLevel: newProduct.stock,
             reason: "Initial Stock (New Product)",
             date: new Date().toISOString(),
-            expiryDate: p.expiryDate
+            expiryDate: newProduct.expiryDate
         };
         await db.saveStockLog(log);
     }
   };
   
   const handleBulkAddProducts = async (newProducts: Product[]) => {
-      setProducts(prev => [...prev, ...newProducts]);
-      await db.saveAllProducts(newProducts);
+      const productsWithOrder = newProducts.map((p, index) => ({ ...p, order: products.length + index }));
+      setProducts(prev => [...prev, ...productsWithOrder]);
+      await db.saveAllProducts(productsWithOrder);
       
       // Log Bulk Import
-      for (const p of newProducts) {
+      for (const p of productsWithOrder) {
           if (p.stock > 0) {
              const log: StockLog = {
                 id: generateId(),
@@ -955,8 +968,10 @@ const App = () => {
   }
 
   const handleUpdateProduct = async (p: Product) => {
-    setProducts(products.map(prev => prev.id === p.id ? p : prev));
-    await db.saveProduct(p);
+    const existingProduct = products.find(prev => prev.id === p.id);
+    const updatedProduct = { ...p, order: existingProduct?.order ?? p.order };
+    setProducts(products.map(prev => prev.id === p.id ? updatedProduct : prev));
+    await db.saveProduct(updatedProduct);
   };
 
   const handleDeleteProduct = async (id: string) => {
@@ -980,8 +995,9 @@ const App = () => {
   };
 
   const handleReorderProducts = async (newProducts: Product[]) => {
-    setProducts(newProducts);
-    await db.saveAllProducts(newProducts);
+    const updatedProducts = newProducts.map((p, index) => ({ ...p, order: index }));
+    setProducts(updatedProducts);
+    await db.saveAllProducts(updatedProducts);
   };
 
   const handleRestock = async (productId: string, quantity: number, reason: string, expiryDate?: string) => {
