@@ -31,6 +31,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
   const [viewDetails, setViewDetails] = useState<{ title: string; items: Product[] } | null>(null);
   const [selectedDayFilter, setSelectedDayFilter] = useState<string>('All');
   const [spendingMetric, setSpendingMetric] = useState<'spent' | 'points'>('spent');
+  const [itemsSoldDate, setItemsSoldDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [isItemsSoldModalOpen, setIsItemsSoldModalOpen] = useState(false);
   const [shifts, setShifts] = useState<ShiftRecord[]>([]);
   const dashboardRef = useRef<HTMLDivElement>(null);
 
@@ -406,6 +408,25 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
     };
   }, [transactions]);
 
+  const itemsSoldData = useMemo(() => {
+    const stats: Record<string, { quantity: number, unit: string }> = {};
+    const dayTxs = transactions.filter(t => t.date.startsWith(itemsSoldDate) && t.status !== 'Refunded');
+    
+    dayTxs.forEach(t => {
+        t.items.forEach(item => {
+            if (!stats[item.name]) {
+                const product = products.find(p => p.id === item.productId);
+                stats[item.name] = { quantity: 0, unit: product?.measurementUnit || 'pcs' };
+            }
+            stats[item.name].quantity += item.quantity;
+        });
+    });
+
+    return Object.entries(stats)
+        .map(([name, data]) => ({ name, quantity: data.quantity, unit: data.unit }))
+        .sort((a, b) => b.quantity - a.quantity);
+  }, [transactions, itemsSoldDate, products]);
+
   // --- 7. Hourly Performance Data Logic ---
   const hourlyPerformanceData = useMemo(() => {
     const relevantTransactions = transactions.filter(t => t.status !== 'Refunded');
@@ -591,7 +612,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
            </div>
            <h1 className="text-3xl font-black text-gray-900 dark:text-white tracking-tight">Dashboard</h1>
         </div>
-        <div className="flex gap-2 no-export">
+        <div className="flex gap-2 no-export flex-wrap">
+            <button onClick={() => setIsItemsSoldModalOpen(true)} className="bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-gray-700 px-4 py-2 rounded-xl font-bold text-sm hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors flex items-center gap-2 shadow-sm">
+                <ShoppingBag className="w-4 h-4 text-blue-500" /> Items Sold
+            </button>
             <button onClick={handleExportPDF} disabled={isExporting} className="bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-gray-700 px-4 py-2 rounded-xl font-bold text-sm hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors flex items-center gap-2 shadow-sm">
                 {isExporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />} Export
             </button>
@@ -831,10 +855,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
          </div>
       </div>
 
-      {/* 4. MAIN CHARTS & LISTS */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-         {/* LEFT COLUMN: Large Charts */}
-         <div className="lg:col-span-2 flex flex-col gap-6">
+      {/* 4. FINANCIAL TRENDS */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
              {/* Sales Chart */}
              <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700">
                 <div className="flex justify-between items-center mb-6">
@@ -897,9 +919,81 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
                     </ResponsiveContainer>
                 </div>
              </div>
+      </div>
 
-             {/* Hourly Activity Pattern */}
+      {/* 5. OPERATIONAL TRENDS */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+             {/* Inventory Value Trend Chart */}
              <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700">
+                <div className="flex justify-between items-center mb-6">
+                    <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                        <Package className="w-5 h-5 text-purple-500" /> Inventory Value Trend
+                    </h3>
+                    <div className="flex bg-gray-100 dark:bg-gray-700 rounded-lg p-1">
+                        <button onClick={() => setInventoryTrendView('weekly')} className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${inventoryTrendView === 'weekly' ? 'bg-white dark:bg-gray-600 shadow-sm text-black dark:text-white' : 'text-gray-500'}`}>Week</button>
+                        <button onClick={() => setInventoryTrendView('monthly')} className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${inventoryTrendView === 'monthly' ? 'bg-white dark:bg-gray-600 shadow-sm text-black dark:text-white' : 'text-gray-500'}`}>Month</button>
+                        <button onClick={() => setInventoryTrendView('yearly')} className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${inventoryTrendView === 'yearly' ? 'bg-white dark:bg-gray-600 shadow-sm text-black dark:text-white' : 'text-gray-500'}`}>Year</button>
+                    </div>
+                </div>
+                <div className="h-64 w-full">
+                     <ResponsiveContainer width="100%" height="100%">
+                        <AreaChart data={inventoryTrendData}>
+                            <defs>
+                            <linearGradient id="colorInventory" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.4}/>
+                                <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0}/>
+                            </linearGradient>
+                            </defs>
+                            <CartesianGrid strokeDasharray="3 3" opacity={0.1} vertical={false} />
+                            <XAxis dataKey="name" stroke="#9ca3af" fontSize={10} tickLine={false} axisLine={false} dy={10} />
+                            <YAxis stroke="#9ca3af" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(value) => `${(value/1000).toFixed(0)}k`} />
+                            <Tooltip 
+                                contentStyle={{ backgroundColor: '#111827', borderColor: '#374151', color: '#fff', borderRadius: '12px' }} 
+                                itemStyle={{ color: '#fff' }}
+                                formatter={(value: number) => [`${storeProfile.currency} ${value.toLocaleString()}`, 'Value']}
+                            />
+                            <Area type="monotone" dataKey="value" stroke="#8b5cf6" strokeWidth={3} fillOpacity={1} fill="url(#colorInventory)" name="Value" />
+                        </AreaChart>
+                    </ResponsiveContainer>
+                </div>
+             </div>
+
+             {/* Expenses Trend Chart */}
+             <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700">
+                 <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2 mb-6">
+                    <TrendingDown className="w-5 h-5 text-red-500" /> Expenses Trend
+                 </h3>
+                 <div className="h-64 w-full">
+                     {expensesTrendData.length > 0 ? (
+                         <ResponsiveContainer width="100%" height="100%">
+                             <AreaChart data={expensesTrendData}>
+                                 <defs>
+                                     <linearGradient id="colorExpense" x1="0" y1="0" x2="0" y2="1">
+                                         <stop offset="5%" stopColor="#ef4444" stopOpacity={0.4}/>
+                                         <stop offset="95%" stopColor="#ef4444" stopOpacity={0}/>
+                                     </linearGradient>
+                                 </defs>
+                                 <CartesianGrid strokeDasharray="3 3" opacity={0.1} vertical={false} />
+                                 <XAxis dataKey="name" stroke="#9ca3af" fontSize={10} tickLine={false} axisLine={false} dy={10} />
+                                 <YAxis stroke="#9ca3af" fontSize={10} tickLine={false} axisLine={false} tickFormatter={(val) => `${(val/1000).toFixed(0)}k`} />
+                                 <Tooltip contentStyle={{ backgroundColor: '#111827', borderColor: '#374151', color: '#fff', borderRadius: '12px' }} itemStyle={{ color: '#fff' }} formatter={(value: number) => [`${storeProfile.currency} ${value.toLocaleString()}`, 'Expenses']} />
+                                 <Area type="monotone" dataKey="amount" stroke="#ef4444" strokeWidth={3} fillOpacity={1} fill="url(#colorExpense)" name="Expenses" />
+                             </AreaChart>
+                         </ResponsiveContainer>
+                     ) : (
+                         <div className="h-full flex flex-col items-center justify-center text-gray-400 text-sm">
+                             <Banknote className="w-8 h-8 mb-2 opacity-20" />
+                             No expense data available
+                         </div>
+                     )}
+                 </div>
+             </div>
+      </div>
+
+      {/* 6. DETAILED ANALYSIS */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+             {/* Hourly Activity Pattern */}
+             <div className="lg:col-span-2 bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700">
                  <div className="flex flex-col sm:flex-row justify-between items-center mb-6 gap-4">
                      <div>
                          <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2">
@@ -969,77 +1063,43 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
                  </div>
              </div>
 
-             {/* Inventory Value Trend Chart */}
-             <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700">
-                <div className="flex justify-between items-center mb-6">
-                    <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2">
-                        <Package className="w-5 h-5 text-purple-500" /> Inventory Value Trend
-                    </h3>
-                    <div className="flex bg-gray-100 dark:bg-gray-700 rounded-lg p-1">
-                        <button onClick={() => setInventoryTrendView('weekly')} className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${inventoryTrendView === 'weekly' ? 'bg-white dark:bg-gray-600 shadow-sm text-black dark:text-white' : 'text-gray-500'}`}>Week</button>
-                        <button onClick={() => setInventoryTrendView('monthly')} className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${inventoryTrendView === 'monthly' ? 'bg-white dark:bg-gray-600 shadow-sm text-black dark:text-white' : 'text-gray-500'}`}>Month</button>
-                        <button onClick={() => setInventoryTrendView('yearly')} className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${inventoryTrendView === 'yearly' ? 'bg-white dark:bg-gray-600 shadow-sm text-black dark:text-white' : 'text-gray-500'}`}>Year</button>
-                    </div>
-                </div>
-                <div className="h-64 w-full">
-                     <ResponsiveContainer width="100%" height="100%">
-                        <AreaChart data={inventoryTrendData}>
-                            <defs>
-                            <linearGradient id="colorInventory" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.4}/>
-                                <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0}/>
-                            </linearGradient>
-                            </defs>
-                            <CartesianGrid strokeDasharray="3 3" opacity={0.1} vertical={false} />
-                            <XAxis dataKey="name" stroke="#9ca3af" fontSize={10} tickLine={false} axisLine={false} dy={10} />
-                            <YAxis stroke="#9ca3af" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(value) => `${(value/1000).toFixed(0)}k`} />
-                            <Tooltip 
-                                contentStyle={{ backgroundColor: '#111827', borderColor: '#374151', color: '#fff', borderRadius: '12px' }} 
-                                itemStyle={{ color: '#fff' }}
-                                formatter={(value: number) => [`${storeProfile.currency} ${value.toLocaleString()}`, 'Value']}
-                            />
-                            <Area type="monotone" dataKey="value" stroke="#8b5cf6" strokeWidth={3} fillOpacity={1} fill="url(#colorInventory)" name="Value" />
-                        </AreaChart>
-                    </ResponsiveContainer>
-                </div>
-             </div>
-
-             {/* Expenses Trend Chart */}
+             {/* Payment Methods Pie */}
              <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700">
                  <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2 mb-6">
-                    <TrendingDown className="w-5 h-5 text-red-500" /> Expenses Trend
+                    <Wallet className="w-5 h-5 text-purple-500" /> Revenue Source (Today)
                  </h3>
-                 <div className="h-64 w-full">
-                     {expensesTrendData.length > 0 ? (
-                         <ResponsiveContainer width="100%" height="100%">
-                             <AreaChart data={expensesTrendData}>
-                                 <defs>
-                                     <linearGradient id="colorExpense" x1="0" y1="0" x2="0" y2="1">
-                                         <stop offset="5%" stopColor="#ef4444" stopOpacity={0.4}/>
-                                         <stop offset="95%" stopColor="#ef4444" stopOpacity={0}/>
-                                     </linearGradient>
-                                 </defs>
-                                 <CartesianGrid strokeDasharray="3 3" opacity={0.1} vertical={false} />
-                                 <XAxis dataKey="name" stroke="#9ca3af" fontSize={10} tickLine={false} axisLine={false} dy={10} />
-                                 <YAxis stroke="#9ca3af" fontSize={10} tickLine={false} axisLine={false} tickFormatter={(val) => `${(val/1000).toFixed(0)}k`} />
-                                 <Tooltip contentStyle={{ backgroundColor: '#111827', borderColor: '#374151', color: '#fff', borderRadius: '12px' }} itemStyle={{ color: '#fff' }} formatter={(value: number) => [`${storeProfile.currency} ${value.toLocaleString()}`, 'Expenses']} />
-                                 <Area type="monotone" dataKey="amount" stroke="#ef4444" strokeWidth={3} fillOpacity={1} fill="url(#colorExpense)" name="Expenses" />
-                             </AreaChart>
-                         </ResponsiveContainer>
+                 <div className="h-[400px] w-full flex items-center justify-center">
+                     {paymentMethodData.length > 0 ? (
+                        <ResponsiveContainer width="100%" height="100%">
+                            <PieChart>
+                                <Pie
+                                    data={paymentMethodData}
+                                    cx="50%"
+                                    cy="45%"
+                                    innerRadius={60}
+                                    outerRadius={80}
+                                    paddingAngle={5}
+                                    dataKey="value"
+                                >
+                                    {paymentMethodData.map((entry, index) => (
+                                        <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
+                                    ))}
+                                </Pie>
+                                <Tooltip contentStyle={{ backgroundColor: '#111827', borderColor: '#374151', color: '#fff', borderRadius: '12px' }} itemStyle={{ color: '#fff' }} />
+                                <Legend verticalAlign="bottom" iconType="circle" wrapperStyle={{ paddingTop: '20px' }} />
+                            </PieChart>
+                        </ResponsiveContainer>
                      ) : (
-                         <div className="h-full flex flex-col items-center justify-center text-gray-400 text-sm">
-                             <Banknote className="w-8 h-8 mb-2 opacity-20" />
-                             No expense data available
-                         </div>
+                        <div className="text-gray-400 text-sm">No payment data for today</div>
                      )}
                  </div>
              </div>
-         </div>
+      </div>
 
-         {/* RIGHT COLUMN: Lists & Pie Charts */}
-         <div className="flex flex-col gap-6">
+      {/* 7. PERFORMANCE & CATEGORIES */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
              {/* Best Sellers List */}
-             <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700 flex flex-col">
+             <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700 flex flex-col h-full">
                  <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2 mb-6">
                     <PieChartIcon className="w-5 h-5 text-indigo-500" /> Top Performers
                 </h3>
@@ -1097,7 +1157,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
              </div>
 
              {/* Top Spenders Chart */}
-             <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700 flex flex-col">
+             <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700 flex flex-col h-full">
                  <div className="flex justify-between items-center mb-6">
                     <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2">
                         <Target className="w-5 h-5 text-emerald-500" /> Top Spenders
@@ -1135,7 +1195,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
                                 </PieChart>
                             </ResponsiveContainer>
                         </div>
-                        <div className="space-y-3">
+                        <div className="space-y-3 flex-1 overflow-y-auto pr-1">
                             {topSpendersData.map((item, index) => (
                                 <div key={index} className="flex items-center justify-between group hover:bg-gray-50 dark:hover:bg-gray-700/50 p-2 rounded-lg transition-colors">
                                     <div className="flex items-center gap-3">
@@ -1159,44 +1219,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
                  )}
              </div>
 
-             {/* Payment Methods Pie */}
-             <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700">
-                 <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2 mb-6">
-                    <Wallet className="w-5 h-5 text-purple-500" /> Revenue Source (Today)
-                 </h3>
-                 <div className="h-[400px] w-full flex items-center justify-center">
-                     {paymentMethodData.length > 0 ? (
-                        <ResponsiveContainer width="100%" height="100%">
-                            <PieChart>
-                                <Pie
-                                    data={paymentMethodData}
-                                    cx="50%"
-                                    cy="45%"
-                                    innerRadius={60}
-                                    outerRadius={80}
-                                    paddingAngle={5}
-                                    dataKey="value"
-                                >
-                                    {paymentMethodData.map((entry, index) => (
-                                        <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
-                                    ))}
-                                </Pie>
-                                <Tooltip contentStyle={{ backgroundColor: '#111827', borderColor: '#374151', color: '#fff', borderRadius: '12px' }} itemStyle={{ color: '#fff' }} />
-                                <Legend verticalAlign="bottom" iconType="circle" wrapperStyle={{ paddingTop: '20px' }} />
-                            </PieChart>
-                        </ResponsiveContainer>
-                     ) : (
-                        <div className="text-gray-400 text-sm">No payment data for today</div>
-                     )}
-                 </div>
-             </div>
-
              {/* Category Sales Pie */}
-             <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700">
+             <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700 flex flex-col h-full">
                  <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2 mb-6">
                     <PieChartIcon className="w-5 h-5 text-orange-500" /> Category Distribution
                  </h3>
-                 <div className="h-[400px] w-full flex items-center justify-center">
+                 <div className="flex-1 w-full flex items-center justify-center min-h-[250px]">
                      {categoryData.length > 0 ? (
                         <ResponsiveContainer width="100%" height="100%">
                             <PieChart>
@@ -1222,7 +1250,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
                      )}
                  </div>
              </div>
-         </div>
       </div>
 
       {/* 7. DETAILS MODAL (For Slow Moving & Low Stock Cards) */}
@@ -1279,6 +1306,60 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
                 >
                   Go to Inventory Manager
                 </button>
+             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 8. ITEMS SOLD MODAL */}
+      {isItemsSoldModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md" onClick={() => setIsItemsSoldModalOpen(false)}>
+          <div className="bg-white dark:bg-gray-900 w-full max-w-md rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh] border border-gray-200 dark:border-gray-800 animate-fade-in transform scale-100" onClick={e => e.stopPropagation()}>
+             <div className="p-6 border-b border-gray-100 dark:border-gray-800 flex justify-between items-center bg-gray-50 dark:bg-black/50">
+               <div>
+                  <h3 className="text-xl font-black text-gray-900 dark:text-white flex items-center gap-2">
+                      <ShoppingBag className="w-5 h-5 text-blue-500" /> Items Sold
+                  </h3>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 font-medium mt-1">Daily Sales History</p>
+               </div>
+               <button onClick={() => setIsItemsSoldModalOpen(false)} className="p-2 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-500 hover:text-gray-700 dark:hover:text-gray-200 transition-colors">
+                 <X className="w-5 h-5" />
+               </button>
+             </div>
+             
+             <div className="p-4 border-b border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900">
+                <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Select Date</label>
+                <input 
+                    type="date" 
+                    value={itemsSoldDate}
+                    onChange={(e) => setItemsSoldDate(e.target.value)}
+                    className="w-full bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-700 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
+                />
+             </div>
+
+             <div className="overflow-y-auto p-4 bg-gray-50/50 dark:bg-black/20 flex-1 custom-scrollbar">
+                 {itemsSoldData.length > 0 ? (
+                     <div className="space-y-3">
+                         {itemsSoldData.map((item, index) => (
+                             <div key={index} className="bg-white dark:bg-gray-800 p-3 rounded-xl border border-gray-200 dark:border-gray-700 flex items-center justify-between shadow-sm hover:shadow-md transition-all group">
+                                 <div className="flex items-center gap-3">
+                                     <div className="w-10 h-10 rounded-full bg-blue-50 dark:bg-blue-900/30 flex items-center justify-center text-blue-600 dark:text-blue-400 font-black text-sm border border-blue-100 dark:border-blue-800/50">
+                                         {item.quantity}
+                                     </div>
+                                     <span className="font-bold text-gray-700 dark:text-gray-200 group-hover:text-gray-900 dark:group-hover:text-white transition-colors">{item.name}</span>
+                                 </div>
+                                 <span className="text-xs font-bold text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 px-2.5 py-1.5 rounded-lg">
+                                     {item.unit}
+                                 </span>
+                             </div>
+                         ))}
+                     </div>
+                 ) : (
+                     <div className="flex flex-col items-center justify-center py-12 text-gray-400">
+                         <Package className="w-12 h-12 mb-3 opacity-30" />
+                         <p className="font-medium text-sm">No items sold on this date.</p>
+                     </div>
+                 )}
              </div>
           </div>
         </div>
