@@ -1,6 +1,6 @@
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Search, ShoppingCart, Trash2, Plus, Minus, CreditCard, Banknote, User, Coins, X, Split, AlertCircle, RefreshCw, Box, ArrowRight, Receipt, ChevronRight, UserPlus, Target, Calendar, AlertTriangle, ChevronUp, Wallet, Printer, Mail, ChevronDown } from 'lucide-react';
+import { Search, ShoppingCart, Trash2, Plus, Minus, CreditCard, Banknote, User, Coins, X, Split, AlertCircle, RefreshCw, Box, ArrowRight, Receipt, ChevronRight, UserPlus, Target, Calendar, AlertTriangle, ChevronUp, Wallet, Printer, Mail, ChevronDown, CheckCircle, Sparkles, Pause, Play } from 'lucide-react';
 import { Product, CartItem, Transaction, StoreProfile, Customer } from '../types';
 import confetti from 'canvas-confetti';
 import { jsPDF } from 'jspdf';
@@ -18,10 +18,12 @@ interface POSProps {
   onCompleteSale: (transaction: Transaction) => void;
   onRecordExpense: (amount: number, reason: string, source: 'Cash' | 'M-Pesa') => void;
   storeProfile: StoreProfile;
+  onLogMissedSale?: (itemName: string, quantityRequested: number, buyPrice: number, sellPrice: number) => void;
 }
 
-export const POS: React.FC<POSProps> = ({ products, customers = [], transactions = [], onAddCustomer, onCompleteSale, onRecordExpense, storeProfile }) => {
+export const POS: React.FC<POSProps> = ({ products, customers = [], transactions = [], onAddCustomer, onCompleteSale, onRecordExpense, storeProfile, onLogMissedSale }) => {
   const [cart, setCart] = useState<CartItem[]>([]);
+  const [parkedSales, setParkedSales] = useState<{cart: CartItem[], customerId: string, time: number}[]>([]);
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>('All');
   const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'M-Pesa' | 'Debt' | 'Split'>('Cash');
@@ -61,6 +63,8 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
 
   const [discount, setDiscount] = useState<number>(0);
   const [receiptTransaction, setReceiptTransaction] = useState<Transaction | null>(null);
+  const [lastTransaction, setLastTransaction] = useState<Transaction | null>(null);
+  const [showSuccessMessage, setShowSuccessMessage] = useState(false);
 
   // Customer Dropdown State
   const [isCustomerDropdownOpen, setIsCustomerDropdownOpen] = useState(false);
@@ -80,6 +84,13 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
   // Sale Timer State
   const [saleStartTime, setSaleStartTime] = useState<number | null>(null);
   const [saleDuration, setSaleDuration] = useState<number>(0);
+  
+  // Missed Sale State
+  const [isMissedSaleOpen, setIsMissedSaleOpen] = useState(false);
+  const [missedItemName, setMissedItemName] = useState('');
+  const [missedQty, setMissedQty] = useState('1');
+  const [missedBuyPrice, setMissedBuyPrice] = useState('');
+  const [missedPrice, setMissedPrice] = useState('');
 
   useEffect(() => {
     if (cart.length > 0 && !saleStartTime) {
@@ -108,11 +119,28 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
 
   const categories = ['All', ...Array.from(new Set(products.map(p => p.category)))];
 
-  // Daily Sales Calculation (Kept for Confetti Logic only)
+  // Daily Sales Calculation
   const today = new Date().toISOString().split('T')[0];
-  const todaySales = useMemo(() => transactions
-    .filter(t => t.date.startsWith(today) && t.status !== 'Refunded')
-    .reduce((acc, t) => acc + t.total, 0), [transactions, today]);
+  const todayTransactionsList = useMemo(() => transactions.filter(t => t.date.startsWith(today) && t.status !== 'Refunded'), [transactions, today]);
+  const todaySales = useMemo(() => todayTransactionsList.reduce((acc, t) => acc + t.total, 0), [todayTransactionsList]);
+  const todayTransactionsCount = todayTransactionsList.length;
+  const avgBasketSize = todayTransactionsCount > 0 ? todaySales / todayTransactionsCount : 0;
+
+  // Calculate All-Time High Sales
+  const allTimeHighSales = useMemo(() => {
+    const dailyTotals: Record<string, number> = {};
+    transactions.forEach(t => {
+      if (t.status === 'Refunded') return;
+      const date = t.date.split('T')[0];
+      if (date !== today) { // Only consider past days for the record
+        dailyTotals[date] = (dailyTotals[date] || 0) + t.total;
+      }
+    });
+    const maxHistorical = Math.max(0, ...Object.values(dailyTotals));
+    return maxHistorical;
+  }, [transactions, today]);
+
+  const isAllTimeHigh = todaySales > 0 && todaySales >= allTimeHighSales && allTimeHighSales > 0;
 
   const target = storeProfile.dailySalesTarget || 0;
 
@@ -136,6 +164,66 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
     return [...products].sort((a, b) => (counts[b.id] || 0) - (counts[a.id] || 0)).slice(0, 3);
   }, [products, transactions]);
 
+  const last8Sold = useMemo(() => {
+    const soldIds = new Set<string>();
+    const recentProducts: Product[] = [];
+    // Iterate from newest to oldest
+    for (let i = transactions.length - 1; i >= 0; i--) {
+      const t = transactions[i];
+      if (t.status === 'Refunded') continue;
+      // Items within a transaction are also ordered, but usually we just want the unique products
+      for (const item of t.items) {
+        if (!soldIds.has(item.productId)) {
+          soldIds.add(item.productId);
+          const p = products.find(p => p.id === item.productId);
+          if (p && p.stock > 0) {
+            recentProducts.push(p);
+          }
+          if (recentProducts.length >= 8) return recentProducts;
+        }
+      }
+    }
+    // Fallback if no transactions yet to ensure the bar is visible
+    if (recentProducts.length === 0) {
+      return products.filter(p => p.stock > 0).slice(0, 8);
+    }
+    return recentProducts;
+  }, [transactions, products]);
+
+  const frequentlyBoughtTogether = useMemo(() => {
+    if (cart.length === 0) return [];
+    const cartItemIds = new Set(cart.map(c => c.id));
+    const relatedCounts: Record<string, number> = {};
+
+    transactions.forEach(t => {
+      if (t.status === 'Refunded') return;
+      const tItemIds = t.items.map(i => i.productId);
+      const hasCartItem = tItemIds.some(id => cartItemIds.has(id));
+      if (hasCartItem) {
+        tItemIds.forEach(id => {
+          if (!cartItemIds.has(id)) {
+            relatedCounts[id] = (relatedCounts[id] || 0) + 1;
+          }
+        });
+      }
+    });
+
+    const related = Object.entries(relatedCounts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([id]) => products.find(p => p.id === id))
+      .filter((p): p is Product => p !== undefined && p.stock > 0);
+
+    // Fallback: if no transaction history, show other items from the same categories as items in cart
+    if (related.length === 0) {
+      const cartCategories = new Set(cart.map(c => c.category));
+      return products
+        .filter(p => p.stock > 0 && !cartItemIds.has(p.id) && cartCategories.has(p.category))
+        .slice(0, 5);
+    }
+    return related;
+  }, [cart, transactions, products]);
+
   const subtotal = useMemo(() => cart.reduce((acc, item) => acc + (item.sellPrice * item.quantity), 0), [cart]);
   const total = useMemo(() => Math.max(0, subtotal - discount), [subtotal, discount]);
 
@@ -154,10 +242,31 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
     return 0;
   }, [paymentMethod, cashTendered, mpesaTendered, splitCash, splitMpesa, total]);
 
+  const playBeep = () => {
+    try {
+      const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioContext) return;
+      const ctx = new AudioContext();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(800, ctx.currentTime);
+      gain.gain.setValueAtTime(0.05, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.1);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.1);
+    } catch (e) {
+      // Ignore audio errors
+    }
+  };
+
   const addToCart = (product: Product) => {
     if (product.stock <= 0) {
         return; // Prevent adding out of stock items
     }
+    playBeep();
     setCart(prev => {
       const existing = prev.find(item => item.id === product.id);
       if (existing) {
@@ -249,8 +358,21 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
     setDiscount(0);
   };
 
+  const playKaching = () => {
+    try {
+      const audioSource = storeProfile.customSaleSound || 'https://actions.google.com/sounds/v1/foley/cash_register_kaching.ogg';
+      const audio = new Audio(audioSource);
+      audio.volume = 0.6;
+      audio.play().catch(e => console.log('Audio play failed:', e));
+    } catch (e) {
+      // Ignore audio errors
+    }
+  };
+
   const handleCheckout = () => {
     if (cart.length === 0) return;
+
+    playKaching();
 
     // Trigger Confetti if target met
     const newTotal = todaySales + total;
@@ -270,6 +392,7 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
       customerId: selectedCustomerId || undefined,
       customerName: selectedCustomerId ? customers.find(c => c.id === selectedCustomerId)?.name : undefined,
       customerPhone: selectedCustomerId ? customers.find(c => c.id === selectedCustomerId)?.phone : undefined,
+      changeGiven: changeDue,
     };
 
     if (paymentMethod === 'Cash') {
@@ -278,6 +401,7 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
         return;
       }
       transactionDetails.amountPaid = Number(cashTendered) || total;
+      transactionDetails.cashTendered = Number(cashTendered) || total;
     } 
     else if (paymentMethod === 'M-Pesa') {
       if (Number(mpesaTendered) < total && Number(mpesaTendered) !== 0) {
@@ -297,6 +421,7 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
         cash: Number(splitCash),
         mpesa: Number(splitMpesa)
       };
+      transactionDetails.cashTendered = Number(splitCash);
     }
     else if (paymentMethod === 'Debt') {
        if (!selectedCustomerId) {
@@ -370,10 +495,16 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
     } as Transaction;
 
     onCompleteSale(transaction);
-    setReceiptTransaction(transaction);
+    setLastTransaction(transaction);
     setCart([]);
     resetPaymentFields();
     setIsMobileCartOpen(false);
+    
+    // Show success message
+    setShowSuccessMessage(true);
+    setTimeout(() => {
+      setShowSuccessMessage(false);
+    }, 5000); // Increased to 5s to give time to click the button
   };
 
   const handlePettyCashSubmit = (e: React.FormEvent) => {
@@ -385,6 +516,22 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
     setPettyCashSource('Cash');
     setIsPettyCashOpen(false);
     alert('Petty cash recorded.');
+  };
+
+  const handleMissedSaleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!missedItemName || !missedQty || !missedPrice || !missedBuyPrice) return;
+    
+    if (onLogMissedSale) {
+      onLogMissedSale(missedItemName, Number(missedQty), Number(missedBuyPrice), Number(missedPrice));
+    }
+    
+    setMissedItemName('');
+    setMissedQty('1');
+    setMissedBuyPrice('');
+    setMissedPrice('');
+    setIsMissedSaleOpen(false);
+    alert('Missed sale logged for tracking.');
   };
 
   const handleAddCustomerSubmit = (e: React.FormEvent) => {
@@ -497,6 +644,18 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
 
     doc.setFontSize(8);
     doc.setFont("helvetica", "normal");
+    
+    if (transaction.cashTendered !== undefined) {
+      doc.text('Cash Tendered:', 45, y);
+      doc.text(`${storeProfile.currency} ${transaction.cashTendered.toFixed(2)}`, 75, y, { align: 'right' });
+      y += 5;
+    }
+    if (transaction.changeGiven !== undefined && transaction.changeGiven > 0) {
+      doc.text('Change:', 45, y);
+      doc.text(`${storeProfile.currency} ${transaction.changeGiven.toFixed(2)}`, 75, y, { align: 'right' });
+      y += 5;
+    }
+
     doc.text(`Paid via: ${transaction.paymentMethod}`, 40, y, { align: 'center' });
     y += 5;
     doc.text('Thank you for your business!', 40, y, { align: 'center' });
@@ -524,6 +683,14 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
       body += `Discount: -${storeProfile.currency} ${transaction.discount.toFixed(2)}\n`;
     }
     body += `Total: ${storeProfile.currency} ${transaction.total.toFixed(2)}\n`;
+    
+    if (transaction.cashTendered !== undefined) {
+      body += `Cash Tendered: ${storeProfile.currency} ${transaction.cashTendered.toFixed(2)}\n`;
+    }
+    if (transaction.changeGiven !== undefined && transaction.changeGiven > 0) {
+      body += `Change: ${storeProfile.currency} ${transaction.changeGiven.toFixed(2)}\n`;
+    }
+    
     body += `Payment Method: ${transaction.paymentMethod}\n`;
 
     const mailtoLink = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
@@ -534,8 +701,39 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
   const quickCashAmounts = [100, 200, 500, 1000];
 
   return (
-    <div className="flex flex-col lg:flex-row h-full gap-3 lg:gap-4">
+    <div className="flex flex-col lg:flex-row h-full gap-3 lg:gap-4 relative">
       
+      {/* Temporary Success Message */}
+      <AnimatePresence>
+        {showSuccessMessage && (
+          <motion.div
+            initial={{ opacity: 0, y: -50, scale: 0.9 }}
+            animate={{ opacity: 1, y: 20, scale: 1 }}
+            exit={{ opacity: 0, y: -20, scale: 0.9 }}
+            className="absolute top-4 left-1/2 -translate-x-1/2 z-[60] flex items-center gap-4 bg-emerald-500 text-white px-6 py-3 rounded-2xl shadow-2xl shadow-emerald-500/20"
+          >
+            <div className="flex items-center gap-3">
+              <CheckCircle className="w-6 h-6" />
+              <div>
+                <p className="font-bold text-sm">Sale Completed Successfully!</p>
+                <p className="text-emerald-100 text-xs">The transaction has been recorded.</p>
+              </div>
+            </div>
+            {lastTransaction && (
+              <button 
+                onClick={() => {
+                  setReceiptTransaction(lastTransaction);
+                  setShowSuccessMessage(false);
+                }}
+                className="ml-2 px-3 py-1.5 bg-white/20 hover:bg-white/30 rounded-lg text-xs font-bold transition-colors whitespace-nowrap"
+              >
+                View Receipt
+              </button>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* LEFT: Product Grid Panel */}
       <div className="flex-1 flex flex-col bg-white dark:bg-gray-900 rounded-3xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-800 overflow-hidden relative">
         {/* Header/Filters */}
@@ -567,6 +765,12 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
                 >
                   <Coins className="w-5 h-5 md:w-4 md:h-4" /> <span className="hidden md:inline">Withdraw</span>
                 </button>
+                <button 
+                  onClick={() => setIsMissedSaleOpen(true)}
+                  className="bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400 p-3 md:px-5 md:py-3.5 rounded-2xl text-sm font-bold flex items-center gap-2 hover:bg-purple-100 dark:hover:bg-purple-900/40 transition-all border border-purple-100 dark:border-purple-900/30 shadow-sm active:scale-95"
+                >
+                  <Target className="w-5 h-5 md:w-4 md:h-4" /> <span className="hidden md:inline">Log Missed Sale</span>
+                </button>
             </div>
           </div>
           <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
@@ -588,10 +792,50 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
 
         {/* Grid */}
         <div className="flex-1 overflow-y-auto p-2 md:p-4 bg-gray-50/30 dark:bg-black/20 pb-24 md:pb-4 custom-scrollbar">
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-2 md:gap-3">
+          
+          {/* Quick Access Sections */}
+          {cart.length === 0 && last8Sold.length > 0 && (
+            <div className="mb-4">
+              <h3 className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-2 px-1">Quick Access: Last 8 Sold</h3>
+              <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
+                {last8Sold.map(product => (
+                  <button 
+                    key={`last-${product.id}`}
+                    onClick={() => addToCart(product)}
+                    className="flex-shrink-0 flex items-center gap-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-1.5 text-left hover:border-primary-500 dark:hover:border-primary-500 transition-all shadow-sm"
+                  >
+                    <span className="font-bold text-xs text-gray-800 dark:text-gray-100 whitespace-nowrap">{product.name}</span>
+                    <span className="text-primary-600 dark:text-primary-400 font-bold text-[10px] whitespace-nowrap">{storeProfile.currency} {product.sellPrice}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {cart.length > 0 && frequentlyBoughtTogether.length > 0 && (
+            <div className="mb-4">
+              <h3 className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-2 px-1 flex items-center gap-1">
+                <Sparkles className="w-3 h-3 text-amber-500" /> Frequently Bought Together
+              </h3>
+              <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
+                {frequentlyBoughtTogether.map(product => (
+                  <button 
+                    key={`freq-${product.id}`}
+                    onClick={() => addToCart(product)}
+                    className="flex-shrink-0 flex items-center gap-2 bg-amber-50/50 dark:bg-amber-900/10 border border-amber-100 dark:border-amber-900/30 rounded-lg px-3 py-1.5 text-left hover:border-amber-500 dark:hover:border-amber-500 transition-all shadow-sm"
+                  >
+                    <span className="font-bold text-xs text-amber-900 dark:text-amber-100 whitespace-nowrap">{product.name}</span>
+                    <span className="text-amber-600 dark:text-amber-400 font-bold text-[10px] whitespace-nowrap">{storeProfile.currency} {product.sellPrice}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3 md:gap-4">
             {filteredProducts.map(product => {
               const isOutOfStock = product.stock <= 0;
-              const isLowStock = product.stock <= 5 && !isOutOfStock;
+              const isLowStock = (product.reorderPoint !== undefined ? product.stock <= product.reorderPoint : product.stock <= 5) && !isOutOfStock;
               const expiryDate = product.expiryDate ? new Date(product.expiryDate) : null;
               const daysToExpiry = expiryDate ? Math.ceil((expiryDate.getTime() - new Date().getTime()) / (1000 * 3600 * 24)) : null;
               
@@ -603,37 +847,37 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
                 <div
                   key={product.id}
                   onClick={() => !isOutOfStock && addToCart(product)}
-                  className={`group relative bg-white dark:bg-gray-800/50 border rounded-2xl p-2.5 transition-all duration-300 hover:shadow-lg flex flex-col hover:-translate-y-1
+                  className={`group relative bg-white dark:bg-gray-800 border rounded-2xl p-3 transition-all duration-300 hover:shadow-md dark:hover:shadow-[0_0_15px_rgba(16,185,129,0.15)] flex flex-col hover:-translate-y-1
                     ${isOutOfStock 
                         ? 'opacity-60 cursor-not-allowed border-gray-200 dark:border-gray-800 grayscale' 
-                        : 'cursor-pointer border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+                        : 'cursor-pointer border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-500'
                     }
                     ${isCritical ? 'border-red-500 ring-1 ring-red-500' : isLowStock ? 'border-red-200 dark:border-red-900/50' : ''}
                   `}
                 >
-                  <div className="aspect-[4/3] rounded-xl overflow-hidden bg-gray-50 dark:bg-gray-900 mb-2 relative shadow-inner border border-gray-100 dark:border-gray-800/50">
+                  <div className="aspect-[4/3] rounded-xl overflow-hidden bg-gray-50 dark:bg-gray-900 mb-3 relative shadow-inner border border-gray-100 dark:border-gray-800/50">
                     <img src={product.image} alt={product.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
                     
                     {/* Stock Badge */}
-                    <div className={`absolute top-2 right-2 text-white text-[10px] px-2 py-0.5 rounded-full font-bold shadow-sm backdrop-blur-md ${isOutOfStock ? 'bg-gray-500' : isLowStock ? 'bg-red-500/90' : 'bg-black/60'}`}>
+                    <div className={`absolute top-2 right-2 text-white text-[11px] px-2.5 py-0.5 rounded-full font-bold shadow-sm backdrop-blur-md ${isOutOfStock ? 'bg-gray-500' : isLowStock ? 'bg-red-500/90' : 'bg-black/60'}`}>
                       {product.stock} {product.measurementUnit || 'pcs'}
                     </div>
 
                     {(isExpired || isCritical || isExpiringSoon) && (
-                         <div className={`absolute top-2 left-2 text-[9px] px-1.5 py-0.5 rounded-md font-bold shadow-sm text-white flex items-center gap-0.5 ${isExpired ? 'bg-red-800' : isCritical ? 'bg-red-500' : 'bg-orange-500'}`}>
-                            {isExpired ? 'EXPIRED' : isCritical ? <><AlertTriangle className="w-2.5 h-2.5" /> CRIT</> : 'EXP'}
+                         <div className={`absolute top-2 left-2 text-[10px] px-2 py-0.5 rounded-md font-bold shadow-sm text-white flex items-center gap-1 ${isExpired ? 'bg-red-800' : isCritical ? 'bg-red-500' : 'bg-orange-500'}`}>
+                            {isExpired ? 'EXPIRED' : isCritical ? <><AlertTriangle className="w-3 h-3" /> CRIT</> : 'EXP'}
                          </div>
                     )}
 
                     {isOutOfStock && (
                         <div className="absolute inset-0 bg-white/50 dark:bg-black/50 flex items-center justify-center">
-                            <span className="bg-red-600 text-white text-[10px] font-bold px-2.5 py-1 rounded-md transform -rotate-12 shadow-sm">OUT</span>
+                            <span className="bg-red-600 text-white text-xs font-bold px-3 py-1 rounded-md transform -rotate-12 shadow-sm">OUT</span>
                         </div>
                     )}
                   </div>
                   
                   <div className="flex-1 flex flex-col justify-between px-1">
-                      <h4 className="font-bold text-sm text-gray-800 dark:text-gray-100 line-clamp-2 mb-1 leading-tight tracking-tight">{product.name}</h4>
+                      <h4 className="font-bold text-sm text-gray-800 dark:text-gray-100 line-clamp-2 mb-1.5 leading-tight tracking-tight">{product.name}</h4>
                       <div>
                         <p className="text-gray-900 dark:text-white font-black text-base">{storeProfile.currency} {product.sellPrice}</p>
                         
@@ -735,10 +979,31 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
              </div>
           </div>
           <div className="flex gap-2">
-             {cart.length > 0 && (
-                <button onClick={clearCart} className="w-9 h-9 flex items-center justify-center rounded-xl bg-red-50 dark:bg-red-900/20 text-red-500 hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors">
-                  <Trash2 className="w-4 h-4" />
+             {lastTransaction && cart.length === 0 && (
+                <button 
+                  onClick={() => setReceiptTransaction(lastTransaction)} 
+                  title="View Last Receipt"
+                  className="w-9 h-9 flex items-center justify-center rounded-xl bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                >
+                  <Receipt className="w-4 h-4" />
                 </button>
+             )}
+             {cart.length > 0 && (
+                <div className="flex gap-2">
+                  <button 
+                    onClick={() => {
+                      setParkedSales([...parkedSales, { cart, customerId: selectedCustomerId, time: Date.now() }]);
+                      clearCart();
+                    }} 
+                    title="Park Sale"
+                    className="w-9 h-9 flex items-center justify-center rounded-xl bg-amber-50 dark:bg-amber-900/20 text-amber-600 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors"
+                  >
+                    <Pause className="w-4 h-4" />
+                  </button>
+                  <button onClick={clearCart} className="w-9 h-9 flex items-center justify-center rounded-xl bg-red-50 dark:bg-red-900/20 text-red-500 hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors">
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
              )}
              {/* Mobile Close Button */}
              <button onClick={() => setIsMobileCartOpen(false)} className="md:hidden w-9 h-9 flex items-center justify-center rounded-xl bg-gray-100 dark:bg-gray-800 text-gray-500">
@@ -834,25 +1099,54 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
         {/* Cart Items List - Expanded space */}
         <div className="flex-1 overflow-y-auto p-2 space-y-2 bg-gray-50/50 dark:bg-black/20 custom-scrollbar pb-4">
           {cart.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-gray-400 dark:text-gray-600 space-y-4 opacity-80 px-4">
+            <div className="h-full flex flex-col items-center justify-center text-gray-400 dark:text-gray-600 space-y-6 opacity-80 px-4">
               <div className="w-16 h-16 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center mb-2">
                 <ShoppingCart className="w-8 h-8" />
               </div>
               <p className="font-bold text-sm text-gray-600 dark:text-gray-400">Start a sale</p>
               
-              {topSellers.length > 0 && (
+              <div className="w-full mt-6">
+                <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-2 text-center">Today's Stats</p>
+                
+                <div className="bg-white dark:bg-gray-800 p-4 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm flex flex-col gap-3">
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">Total Sales</span>
+                    <span className="text-sm font-bold text-gray-900 dark:text-white">{storeProfile.currency} {todaySales.toLocaleString()}</span>
+                  </div>
+                  <div className="h-px bg-gray-100 dark:bg-gray-700/50 w-full"></div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">Transactions</span>
+                    <span className="text-sm font-bold text-gray-900 dark:text-white">{todayTransactionsCount}</span>
+                  </div>
+                  <div className="h-px bg-gray-100 dark:bg-gray-700/50 w-full"></div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">Avg Basket</span>
+                    <span className="text-sm font-bold text-gray-900 dark:text-white">{storeProfile.currency} {avgBasketSize.toLocaleString(undefined, {maximumFractionDigits: 2})}</span>
+                  </div>
+                </div>
+              </div>
+
+              {parkedSales.length > 0 && (
                 <div className="w-full mt-6">
-                  <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-2 text-center">Top Sellers</p>
+                  <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-2 text-center">Parked Sales</p>
                   <div className="space-y-2">
-                    {topSellers.map(p => (
-                      <button 
-                        key={p.id}
-                        onClick={() => addToCart(p)}
-                        className="w-full flex items-center justify-between p-2 bg-white dark:bg-gray-800 rounded-lg border border-gray-100 dark:border-gray-700 hover:border-primary-500 dark:hover:border-primary-500 transition-colors shadow-sm"
-                      >
-                        <span className="text-xs font-bold text-gray-900 dark:text-white truncate pr-2">{p.name}</span>
-                        <span className="text-xs font-bold text-primary-600 dark:text-primary-400 whitespace-nowrap">{storeProfile.currency} {p.sellPrice}</span>
-                      </button>
+                    {parkedSales.map((sale, index) => (
+                      <div key={index} className="w-full flex items-center justify-between p-3 bg-amber-50 dark:bg-amber-900/10 rounded-xl border border-amber-100 dark:border-amber-900/30 shadow-sm">
+                        <div className="flex flex-col">
+                          <span className="text-xs font-bold text-amber-900 dark:text-amber-100">Sale {index + 1}</span>
+                          <span className="text-[10px] text-amber-700 dark:text-amber-300">{sale.cart.length} items • {new Date(sale.time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                        </div>
+                        <button 
+                          onClick={() => {
+                            setCart(sale.cart);
+                            setSelectedCustomerId(sale.customerId);
+                            setParkedSales(parkedSales.filter((_, i) => i !== index));
+                          }}
+                          className="w-8 h-8 flex items-center justify-center rounded-lg bg-amber-200 dark:bg-amber-800 text-amber-800 dark:text-amber-200 hover:bg-amber-300 dark:hover:bg-amber-700 transition-colors"
+                        >
+                          <Play className="w-4 h-4" />
+                        </button>
+                      </div>
                     ))}
                   </div>
                 </div>
@@ -946,32 +1240,48 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
 
         {/* Footer / Payment - iOS Glass Morphism */}
         <div className="mt-auto p-4 bg-white/80 dark:bg-black/60 backdrop-blur-2xl border-t border-gray-200/50 dark:border-white/10 z-30 relative shadow-[0_-8px_30px_-15px_rgba(0,0,0,0.1)] dark:shadow-none transition-colors duration-300">
-          <div className="relative z-10">
-              {/* Subtotal & Change Due */}
+          <div className="relative z-10 flex flex-col gap-4">
+              {/* Discount & Total */}
               {cart.length > 0 && (
-                <div className="flex justify-between items-end mb-4">
-                  <div className="flex flex-col">
-                      <span className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-0.5">Subtotal</span>
-                      <span className="text-3xl font-bold text-gray-900 dark:text-white tracking-tight leading-none">{storeProfile.currency} {total.toLocaleString()}</span>
+                <div className="flex flex-col gap-2">
+                  <div className="flex justify-between items-end px-1">
+                    <div className="flex flex-col">
+                        <span className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-0.5">Total</span>
+                        <div className="flex items-baseline gap-3">
+                            <span className="text-3xl font-bold text-gray-900 dark:text-white tracking-tight leading-none">{storeProfile.currency} {total.toLocaleString()}</span>
+                            
+                            <div className="flex items-center gap-1 bg-gray-100/80 dark:bg-gray-800/80 px-2 py-1 rounded-md border border-gray-200/50 dark:border-gray-700/50">
+                                <span className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Disc:</span>
+                                <input 
+                                    type="number" 
+                                    min="0"
+                                    value={discount === 0 ? '' : discount}
+                                    onChange={(e) => setDiscount(Number(e.target.value) || 0)}
+                                    className="w-10 text-right font-bold text-sm bg-transparent outline-none text-gray-900 dark:text-white focus:text-primary-500 transition-colors"
+                                    placeholder="0"
+                                />
+                            </div>
+                        </div>
+                    </div>
+                    <AnimatePresence>
+                      {changeDue > 0 && (
+                          <motion.div 
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: 10 }}
+                            className="text-right flex flex-col"
+                          >
+                              <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider mb-0.5">Change Due</span>
+                              <span className="text-xl font-bold text-emerald-600 dark:text-emerald-400 leading-none">{storeProfile.currency} {changeDue.toLocaleString()}</span>
+                          </motion.div>
+                      )}
+                    </AnimatePresence>
                   </div>
-                  <AnimatePresence>
-                    {changeDue > 0 && (
-                        <motion.div 
-                          initial={{ opacity: 0, y: 10 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          exit={{ opacity: 0, y: 10 }}
-                          className="text-right flex flex-col"
-                        >
-                            <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider mb-0.5">Change Due</span>
-                            <span className="text-xl font-bold text-emerald-600 dark:text-emerald-400 leading-none">{storeProfile.currency} {changeDue.toLocaleString()}</span>
-                        </motion.div>
-                    )}
-                  </AnimatePresence>
                 </div>
               )}
 
               {/* Payment Method Selector - iOS Segmented Control Style */}
-              <div className="flex p-1 mb-4 bg-gray-100/80 dark:bg-gray-800/80 rounded-xl backdrop-blur-md border border-gray-200/50 dark:border-gray-700/50 relative">
+              <div className="flex p-1 bg-gray-100/80 dark:bg-gray-800/80 rounded-xl backdrop-blur-md border border-gray-200/50 dark:border-gray-700/50 relative">
                 {[
                   { id: 'Cash', icon: Banknote, label: 'Cash' },
                   { id: 'M-Pesa', icon: CreditCard, label: 'M-Pesa' },
@@ -980,27 +1290,28 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
                   { id: 'Credit', icon: Wallet, label: 'Credit' },
                 ].map(pm => {
                     const isSelected = paymentMethod === pm.id;
+                    const isMpesa = pm.id === 'M-Pesa';
                     return (
                       <button
                         key={pm.id}
                         onClick={() => setPaymentMethod(pm.id as any)}
-                        className={`relative flex-1 flex flex-col items-center justify-center py-2 rounded-lg transition-all duration-300 z-10 ${
+                        className={`relative flex-1 flex flex-col items-center justify-center py-1.5 rounded-lg transition-all duration-300 z-10 ${
                           isSelected
-                            ? 'text-gray-900 dark:text-white' 
+                            ? (isMpesa ? 'text-white' : 'text-gray-900 dark:text-white')
                             : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
                         }`}
                       >
                         {isSelected && (
                           <motion.div
                             layoutId="payment-method-bg"
-                            className="absolute inset-0 bg-white dark:bg-gray-700 rounded-lg shadow-sm border border-gray-200/50 dark:border-gray-600/50"
+                            className={`absolute inset-0 rounded-lg shadow-sm border ${isMpesa ? 'bg-emerald-500 border-emerald-600' : 'bg-white dark:bg-gray-700 border-gray-200/50 dark:border-gray-600/50'}`}
                             initial={false}
                             transition={{ type: "spring", stiffness: 500, damping: 35 }}
                           />
                         )}
                         <div className="relative z-10 flex flex-col items-center">
-                          <pm.icon className={`w-4 h-4 mb-1 ${isSelected ? 'text-primary-500 dark:text-primary-400' : ''}`} />
-                          <span className="text-[9px] font-semibold uppercase tracking-wider">{pm.label}</span>
+                          <pm.icon className={`w-3.5 h-3.5 mb-0.5 ${isSelected && !isMpesa ? 'text-primary-500 dark:text-primary-400' : ''}`} />
+                          <span className="text-[8px] font-semibold uppercase tracking-wider">{pm.label}</span>
                         </div>
                       </button>
                     )
@@ -1008,7 +1319,7 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
               </div>
 
               {/* Dynamic Payment Inputs */}
-              <div className="mb-4 min-h-[60px]">
+              <div className="min-h-[60px]">
                 <AnimatePresence mode="wait">
                   {paymentMethod === 'Cash' && (
                     <motion.div 
@@ -1223,7 +1534,7 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
                 className={`w-full font-bold py-3.5 rounded-xl shadow-sm transition-all transform active:scale-[0.98] flex items-center justify-center gap-2 text-base ${
                    cart.length === 0 || ((paymentMethod === 'Debt' || paymentMethod === 'Credit') && !selectedCustomerId)
                    ? 'bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-500 cursor-not-allowed border border-gray-200 dark:border-gray-700'
-                   : 'bg-gray-900 dark:bg-white text-white dark:text-gray-900 hover:bg-gray-800 dark:hover:bg-gray-100 shadow-md'
+                   : 'bg-emerald-500 text-white hover:bg-emerald-600 shadow-emerald-500/20 shadow-lg'
                 }`}
               >
                 {paymentMethod === 'Debt' ? 'Record Transaction' : 'Complete Sale'}
@@ -1232,6 +1543,101 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
           </div>
         </div>
       </div>
+
+      {/* Missed Sale Modal */}
+      {isMissedSaleOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md">
+           <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] w-full max-w-sm overflow-hidden animate-fade-in border border-gray-100 dark:border-gray-800 transform scale-100">
+             <div className="p-6 border-b border-gray-100 dark:border-gray-800 flex justify-between items-center bg-purple-50 dark:bg-purple-900/20">
+              <h3 className="text-xl font-black text-purple-900 dark:text-purple-100 tracking-tight flex items-center gap-2"><Target className="w-5 h-5" /> Log Missed Sale</h3>
+              <button onClick={() => setIsMissedSaleOpen(false)} className="text-purple-400 hover:text-purple-600 dark:hover:text-purple-200 transition-colors">
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+            <form onSubmit={handleMissedSaleSubmit} className="p-6 space-y-5">
+              <div>
+                <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-2 uppercase tracking-wider">Common Items</label>
+                <div className="flex flex-wrap gap-2 mb-3">
+                  {['Sugar', 'Milk', 'Flour', 'Bread', 'Detergent'].map(item => (
+                    <button
+                      key={item}
+                      type="button"
+                      onClick={() => setMissedItemName(item)}
+                      className={`px-3 py-1.5 rounded-lg text-sm font-bold border transition-colors ${missedItemName === item ? 'bg-purple-100 dark:bg-purple-900/40 border-purple-300 dark:border-purple-700 text-purple-800 dark:text-purple-200' : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400'}`}
+                    >
+                      {item}
+                    </button>
+                  ))}
+                </div>
+                <label htmlFor="missed-item" className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5 uppercase tracking-wider">Item Name (Or Type Other)</label>
+                <input 
+                  id="missed-item"
+                  name="itemName"
+                  required
+                  type="text"
+                  value={missedItemName}
+                  onChange={e => setMissedItemName(e.target.value)}
+                  placeholder="e.g. Eggs"
+                  className="w-full p-3 border border-gray-200 dark:border-gray-700 rounded-xl bg-white dark:bg-black dark:text-white focus:ring-2 focus:ring-purple-500 outline-none"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="col-span-2 sm:col-span-1">
+                  <label htmlFor="missed-qty" className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5 uppercase tracking-wider">Quantity</label>
+                  <input 
+                    id="missed-qty"
+                    required
+                    type="number"
+                    min="1"
+                    value={missedQty}
+                    onChange={e => setMissedQty(e.target.value)}
+                    className="w-full p-3 border border-gray-200 dark:border-gray-700 rounded-xl bg-white dark:bg-black dark:text-white focus:ring-2 focus:ring-purple-500 outline-none"
+                  />
+                </div>
+                <div className="col-span-2 sm:col-span-1">
+                  <label htmlFor="missed-buy-price" className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5 uppercase tracking-wider">Est. Buying Price</label>
+                  <input 
+                    id="missed-buy-price"
+                    required
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={missedBuyPrice}
+                    onChange={e => setMissedBuyPrice(e.target.value)}
+                    placeholder="0.00"
+                    className="w-full p-3 border border-gray-200 dark:border-gray-700 rounded-xl bg-white dark:bg-black dark:text-white focus:ring-2 focus:ring-purple-500 outline-none"
+                  />
+                </div>
+                <div className="col-span-2 grow">
+                  <label htmlFor="missed-price" className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5 uppercase tracking-wider">Est. Selling Price</label>
+                  <input 
+                    id="missed-price"
+                    required
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={missedPrice}
+                    onChange={e => setMissedPrice(e.target.value)}
+                    placeholder="0.00"
+                    className="w-full p-3 border border-gray-200 dark:border-gray-700 rounded-xl bg-white dark:bg-black dark:text-white focus:ring-2 focus:ring-purple-500 outline-none"
+                  />
+                </div>
+              </div>
+              <div className="text-[10px] text-gray-500 bg-gray-50 dark:bg-gray-800 p-2 rounded-lg border border-gray-100 dark:border-gray-700 font-medium">
+                <span className="text-purple-600 font-black">FixrTech Profit Algorithm:</span> 
+                {missedPrice && missedBuyPrice && Number(missedPrice) > Number(missedBuyPrice) ? (
+                   <> Lost Profit will be <span className="text-emerald-500 font-bold">{(Number(missedQty) * (Number(missedPrice) - Number(missedBuyPrice))).toLocaleString()}</span> {storeProfile.currency} ({(((Number(missedPrice) - Number(missedBuyPrice))/Number(missedPrice)) * 100).toFixed(1)}% margin)</>
+                ) : (
+                  <> Enter buying and selling prices to calculate accurate lost profit.</>
+                )}
+              </div>
+              <button type="submit" className="w-full bg-purple-600 text-white py-3.5 rounded-xl hover:bg-purple-700 font-bold shadow-lg shadow-purple-900/20 transform active:scale-95 transition-all">
+                Log Missed Sale
+              </button>
+            </form>
+           </div>
+        </div>
+      )}
 
       {/* Petty Cash Modal */}
       {isPettyCashOpen && (
@@ -1424,9 +1830,22 @@ export const POS: React.FC<POSProps> = ({ products, customers = [], transactions
                     </div>
 
                     <div className="border-t-2 border-dashed border-gray-200 dark:border-gray-800 pt-6 text-center">
-                        <div className="inline-block bg-gray-100 dark:bg-gray-800 px-4 py-2 rounded-lg mb-6">
+                        <div className="inline-block bg-gray-100 dark:bg-gray-800 px-4 py-2 rounded-lg mb-6 w-full max-w-[200px]">
                             <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Payment Method</p>
-                            <p className="font-bold text-gray-900 dark:text-white">{receiptTransaction.paymentMethod}</p>
+                            <p className="font-bold text-gray-900 dark:text-white mb-2">{receiptTransaction.paymentMethod}</p>
+                            
+                            {receiptTransaction.cashTendered !== undefined && (
+                                <div className="flex justify-between text-xs border-t border-gray-200 dark:border-gray-700 pt-2 mt-2">
+                                    <span className="text-gray-500">Cash Tendered</span>
+                                    <span className="font-bold text-gray-900 dark:text-white">{storeProfile.currency} {receiptTransaction.cashTendered.toFixed(2)}</span>
+                                </div>
+                            )}
+                            {receiptTransaction.changeGiven !== undefined && receiptTransaction.changeGiven > 0 && (
+                                <div className="flex justify-between text-xs mt-1">
+                                    <span className="text-gray-500">Change Given</span>
+                                    <span className="font-bold text-emerald-600 dark:text-emerald-400">{storeProfile.currency} {receiptTransaction.changeGiven.toFixed(2)}</span>
+                                </div>
+                            )}
                         </div>
                         <p className="text-gray-500 font-medium">Thank you for your business!</p>
                         <p className="text-xs text-gray-400 mt-1">Please come again</p>

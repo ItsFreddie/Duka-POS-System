@@ -1,5 +1,5 @@
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Plus, Edit2, Trash2, Search, Package, Save, X, Download, Upload, Layers, LayoutGrid, List, MoreVertical, ArrowDownUp, GripVertical, FileSpreadsheet, ChevronDown, ChevronRight, ClipboardList, Calendar, AlertTriangle } from 'lucide-react';
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import { Product, StoreProfile } from '../types';
@@ -35,6 +35,22 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
   // Category Collapsed State
   const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>({});
 
+  // Initialize collapsed state for new categories
+  useEffect(() => {
+    const uniqueCategories = Array.from(new Set(products.map(p => p.category)));
+    setCollapsedCategories(prev => {
+      const newState = { ...prev };
+      let hasChanges = false;
+      uniqueCategories.forEach(cat => {
+        if (newState[cat] === undefined) {
+          newState[cat] = true; // Default to collapsed
+          hasChanges = true;
+        }
+      });
+      return hasChanges ? newState : prev;
+    });
+  }, [products]);
+
   // State for Quick Stock Add
   const [selectedStockProduct, setSelectedStockProduct] = useState<string>('');
   const [stockToAdd, setStockToAdd] = useState<string>('0');
@@ -49,9 +65,23 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
     stock: '',
     image: '',
     measurementUnit: 'pcs',
-    expiryDate: ''
+    expiryDate: '',
+    reorderPoint: ''
   };
   const [form, setForm] = useState(initialForm);
+
+  const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
+  const exportMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(event.target as Node)) {
+        setIsExportMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -157,7 +187,8 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
       stock: Number(form.stock),
       image: form.image || `https://via.placeholder.com/400?text=${form.name.charAt(0)}`,
       measurementUnit: form.measurementUnit || 'pcs',
-      expiryDate: form.expiryDate || undefined
+      expiryDate: form.expiryDate || undefined,
+      reorderPoint: form.reorderPoint !== '' ? Number(form.reorderPoint) : undefined
     };
 
     if (editingId) {
@@ -192,7 +223,8 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
       stock: product.stock.toString(),
       image: product.image,
       measurementUnit: product.measurementUnit || 'pcs',
-      expiryDate: product.expiryDate || ''
+      expiryDate: product.expiryDate || '',
+      reorderPoint: product.reorderPoint !== undefined ? product.reorderPoint.toString() : ''
     });
     setEditingId(product.id);
     setIsModalOpen(true);
@@ -212,9 +244,22 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
     setForm(initialForm);
   };
 
-  const exportToCSV = () => {
+  const exportToCSV = (filterType: 'all' | 'out-of-stock' | 'low-stock' = 'all') => {
+    let filteredProducts = products;
+    if (filterType === 'out-of-stock') {
+      filteredProducts = products.filter(p => p.stock === 0);
+    } else if (filterType === 'low-stock') {
+      filteredProducts = products.filter(p => p.stock > 0 && (p.reorderPoint !== undefined ? p.stock <= p.reorderPoint : p.stock <= 5));
+    }
+    
+    if (filteredProducts.length === 0) {
+      alert(`No products found for ${filterType} export.`);
+      setIsExportMenuOpen(false);
+      return;
+    }
+
     const headers = ["Name", "Category", "Buying Price", "Selling Price", "Stock", "Unit", "Expiry Date"];
-    const rows = products.map(p => [
+    const rows = filteredProducts.map(p => [
       `"${p.name.replace(/"/g, '""')}"`,
       `"${p.category.replace(/"/g, '""')}"`,
       p.buyPrice,
@@ -230,10 +275,14 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `inventory_${new Date().toISOString().split('T')[0]}.csv`);
+    let fileName = `inventory_${new Date().toISOString().split('T')[0]}.csv`;
+    if (filterType === 'out-of-stock') fileName = `out_of_stock_${new Date().toISOString().split('T')[0]}.csv`;
+    if (filterType === 'low-stock') fileName = `low_stock_${new Date().toISOString().split('T')[0]}.csv`;
+    link.setAttribute("download", fileName);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    setIsExportMenuOpen(false);
   };
   
   const handleGenerateMasterReport = async () => {
@@ -514,13 +563,39 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
           </button>
           
            {/* Export Button */}
-          <button
-            onClick={exportToCSV}
-            className="flex items-center gap-2 bg-gray-800 dark:bg-gray-700 text-white px-3 py-2.5 rounded-xl hover:bg-gray-900 dark:hover:bg-gray-600 transition-all shadow-lg shadow-gray-900/20 font-semibold"
-            title="Export to CSV"
-          >
-            <Download className="w-4 h-4" />
-          </button>
+          <div className="relative" ref={exportMenuRef}>
+            <button
+              onClick={() => setIsExportMenuOpen(!isExportMenuOpen)}
+              className="flex items-center gap-2 bg-gray-800 dark:bg-gray-700 text-white px-3 py-2.5 rounded-xl hover:bg-gray-900 dark:hover:bg-gray-600 transition-all shadow-lg shadow-gray-900/20 font-semibold"
+              title="Export CSV Options"
+            >
+              <Download className="w-4 h-4" />
+              <ChevronDown className="w-4 h-4 hidden sm:block opacity-70" />
+            </button>
+            {isExportMenuOpen && (
+              <div className="absolute right-0 top-full mt-2 w-48 bg-white dark:bg-gray-800 rounded-xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-gray-100 dark:border-gray-700 py-2 z-50 animate-fade-in origin-top-right">
+                <button 
+                  onClick={() => exportToCSV('all')}
+                  className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 font-bold transition-colors"
+                >
+                  Export All Inventory
+                </button>
+                <div className="h-px bg-gray-100 dark:bg-gray-700 my-1"></div>
+                <button 
+                  onClick={() => exportToCSV('out-of-stock')}
+                  className="w-full text-left px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 font-bold transition-colors flex items-center justify-between"
+                >
+                  Export Out of Stock
+                </button>
+                <button 
+                  onClick={() => exportToCSV('low-stock')}
+                  className="w-full text-left px-4 py-2 text-sm text-yellow-600 dark:text-yellow-500 hover:bg-yellow-50 dark:hover:bg-yellow-900/20 font-bold transition-colors flex items-center justify-between"
+                >
+                  Export Low Stock
+                </button>
+              </div>
+            )}
+          </div>
           
           {/* Import Button */}
           <label 
@@ -594,7 +669,7 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
                                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-6 p-1 animate-fade-in">
                                         {categoryProducts.map((p, pIndex) => {
                                         const margin = p.sellPrice > 0 ? ((p.sellPrice - p.buyPrice) / p.sellPrice * 100).toFixed(0) : '0';
-                                        const isLowStock = p.stock < 5;
+                                        const isLowStock = p.reorderPoint !== undefined ? p.stock <= p.reorderPoint : p.stock <= 5;
                                         const expiryStatus = getExpiryStatus(p.expiryDate);
 
                                         return (
@@ -706,7 +781,7 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
                                                           </td>
                                                           <td className="p-4 text-gray-600 dark:text-gray-400 font-medium">{p.category}</td>
                                                           <td className="p-4">
-                                                          <span className={`px-2.5 py-1 rounded-md text-xs font-bold ${p.stock < 5 ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'}`}>
+                                                          <span className={`px-2.5 py-1 rounded-md text-xs font-bold ${(p.reorderPoint !== undefined ? p.stock <= p.reorderPoint : p.stock <= 5) ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'}`}>
                                                               {p.stock} {p.measurementUnit || 'pcs'}
                                                           </span>
                                                           </td>
@@ -921,6 +996,19 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
                     className="w-full p-3 border border-gray-200 dark:border-gray-700 rounded-xl bg-transparent dark:text-white focus:ring-2 focus:ring-primary-500 outline-none transition-all"
                   />
                 </div>
+               </div>
+               <div>
+                  <label htmlFor="prod-reorder" className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5 uppercase tracking-wider">Reorder Point (Optional)</label>
+                  <input
+                    id="prod-reorder"
+                    name="reorderPoint"
+                    type="number"
+                    min="0"
+                    placeholder="Alert when stock falls below..."
+                    value={form.reorderPoint}
+                    onChange={e => setForm({...form, reorderPoint: e.target.value})}
+                    className="w-full p-3 border border-gray-200 dark:border-gray-700 rounded-xl bg-transparent dark:text-white focus:ring-2 focus:ring-primary-500 outline-none transition-all"
+                  />
                </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>

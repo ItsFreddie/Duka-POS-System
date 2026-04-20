@@ -35,14 +35,15 @@ import {
   WifiOff,
   Calendar,
   Plus,
-  Eye
+  Eye,
+  Keyboard
 } from 'lucide-react';
 
 import { Dashboard } from './components/Dashboard';
 import { POS } from './components/POS';
 import { Inventory } from './components/Inventory';
 import { Finance } from './components/Finance';
-import { AppView, Product, Transaction, ShiftRecord, StoreProfile, StockLog, Expense, Customer, SpecialDay, PaymentRecord } from './types';
+import { AppView, Product, Transaction, ShiftRecord, StoreProfile, StockLog, Expense, Customer, SpecialDay, PaymentRecord, Shortcuts } from './types';
 import * as db from './utils/db';
 
 // Utility for safe ID generation
@@ -59,7 +60,14 @@ const INITIAL_PROFILE: StoreProfile = {
   specialDays: [
     { id: '1', name: 'New Year', date: '2024-01-01', theme: 'holiday' },
     { id: '2', name: 'Christmas', date: '2024-12-25', theme: 'holiday' }
-  ]
+  ],
+  shortcuts: {
+    pos: "Alt+1",
+    inventory: "Alt+2",
+    dashboard: "Alt+3",
+    finance: "Alt+4",
+    settings: "Alt+5"
+  }
 };
 
 const INITIAL_PRODUCTS: Product[] = [
@@ -113,6 +121,28 @@ const PinEntryModal = ({
     setPin('');
     setError(false);
   };
+
+  const handleBackspace = () => {
+    setPin(prev => prev.slice(0, -1));
+    setError(false);
+  };
+
+  useEffect(() => {
+    if (!isOpen) return;
+    
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (/^[0-9]$/.test(e.key)) {
+        handleNumClick(e.key);
+      } else if (e.key === 'Backspace') {
+        handleBackspace();
+      } else if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, pin, correctPin]);
 
   if (!isOpen) return null;
 
@@ -245,7 +275,7 @@ const LoginView = ({
   const isValid = openingCash.trim() !== '' && openingMpesa.trim() !== '';
 
   return (
-    <div className="flex flex-col h-screen bg-[#F0F2F5] dark:bg-gray-900 text-gray-900 dark:text-gray-100 overflow-hidden font-sans">
+    <div className="flex flex-col h-screen bg-slate-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 overflow-hidden font-sans">
       
       {/* 1. Header Section */}
       <header className="flex-none pt-8 pb-4 px-6 text-center z-10">
@@ -350,7 +380,7 @@ const LoginView = ({
       </main>
 
       {/* 3. Footer Action - Sticky */}
-      <footer className="p-6 pb-8 bg-[#F0F2F5] dark:bg-gray-900 mt-auto">
+      <footer className="p-6 pb-8 bg-slate-50 dark:bg-gray-900 mt-auto">
          <button 
            onClick={handleSubmit}
            disabled={!isValid}
@@ -383,8 +413,8 @@ const LoginView = ({
 
       {/* 4. Denomination Breakdown Modal */}
       {isBreakdownOpen && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-[#F0F2F5] dark:bg-gray-900 sm:bg-black/50 sm:backdrop-blur-sm sm:items-center sm:justify-center">
-          <div className="flex-1 flex flex-col bg-[#F0F2F5] dark:bg-gray-900 sm:bg-white sm:dark:bg-gray-900 sm:rounded-2xl sm:shadow-[0_4px_12px_rgba(0,0,0,0.08)] sm:max-w-md sm:w-full sm:max-h-[85vh] overflow-hidden sm:border border-gray-200 dark:border-gray-800">
+        <div className="fixed inset-0 z-50 flex flex-col bg-slate-50 dark:bg-gray-900 sm:bg-black/50 sm:backdrop-blur-sm sm:items-center sm:justify-center">
+          <div className="flex-1 flex flex-col bg-slate-50 dark:bg-gray-900 sm:bg-white sm:dark:bg-gray-900 sm:rounded-2xl sm:shadow-[0_4px_12px_rgba(0,0,0,0.08)] sm:max-w-md sm:w-full sm:max-h-[85vh] overflow-hidden sm:border border-gray-200 dark:border-gray-800">
             
             {/* Modal Header */}
             <div className="p-5 border-b border-gray-200 dark:border-gray-800 flex justify-between items-center bg-white dark:bg-gray-900 z-10 shadow-sm">
@@ -447,7 +477,7 @@ const LoginView = ({
             </div>
 
             {/* Modal Footer */}
-            <div className="p-5 border-t border-gray-200 dark:border-gray-800 bg-[#F0F2F5] dark:bg-black/20">
+            <div className="p-5 border-t border-gray-200 dark:border-gray-800 bg-slate-50 dark:bg-black/20">
                <div className="flex justify-between items-center mb-4 px-1">
                   <span className="font-medium text-gray-500 dark:text-gray-400">Total Calculated</span>
                   <span className="text-2xl font-black text-emerald-600 dark:text-emerald-400">
@@ -478,6 +508,7 @@ const App = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false); // Mobile toggle
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false); // Desktop collapse
   const [isPinModalOpen, setIsPinModalOpen] = useState(false);
+  const [pendingAdminView, setPendingAdminView] = useState<AppView | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   
@@ -504,6 +535,7 @@ const App = () => {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [stockLogs, setStockLogs] = useState<StockLog[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
+  const [missedSales, setMissedSales] = useState<MissedSale[]>([]);
   const [currentShift, setCurrentShift] = useState<ShiftRecord | null>(null);
   const [lastClosedShift, setLastClosedShift] = useState<ShiftRecord | null>(null);
 
@@ -511,14 +543,15 @@ const App = () => {
   useEffect(() => {
     const loadData = async () => {
       try {
-        const [loadedProducts, loadedTransactions, loadedShift, loadedProfile, loadedCustomers, loadedLastShift, loadedStockLogs] = await Promise.all([
+        const [loadedProducts, loadedTransactions, loadedShift, loadedProfile, loadedCustomers, loadedLastShift, loadedStockLogs, loadedMissedSales] = await Promise.all([
           db.getAllProducts(),
           db.getAllTransactions(),
           db.getCurrentShift(),
           db.getProfile(),
           db.getAllCustomers(),
           db.getLastClosedShift(),
-          db.getStockLogs()
+          db.getStockLogs(),
+          db.getAllMissedSales()
         ]);
 
         if (loadedProducts.length > 0) {
@@ -534,6 +567,7 @@ const App = () => {
         // Sort transactions by date desc for UI
         setTransactions(loadedTransactions.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
         setStockLogs(loadedStockLogs);
+        setMissedSales(loadedMissedSales || []);
         
         setCurrentShift(loadedShift);
         
@@ -575,6 +609,64 @@ const App = () => {
       document.documentElement.classList.remove('dark');
     }
   }, [isDarkMode]);
+
+  // --- Keyboard Shortcuts ---
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!profile.shortcuts) return;
+
+      const normalizeShortcut = (shortcut: string) => shortcut.toLowerCase().replace(/\s/g, '');
+      const pressedKeys = [];
+      if (e.ctrlKey) pressedKeys.push('ctrl');
+      if (e.altKey) pressedKeys.push('alt');
+      if (e.shiftKey) pressedKeys.push('shift');
+      if (e.metaKey) pressedKeys.push('meta');
+      
+      let key = e.key.toLowerCase();
+      // Handle Mac Option key character mapping by using e.code for alphanumeric keys
+      if (e.code.startsWith('Digit')) {
+        key = e.code.replace('Digit', '');
+      } else if (e.code.startsWith('Key')) {
+        key = e.code.replace('Key', '').toLowerCase();
+      }
+      
+      if (key && !['control', 'alt', 'shift', 'meta'].includes(key)) {
+        pressedKeys.push(key);
+      }
+      const pressedShortcut = pressedKeys.join('+');
+
+      // Don't trigger single-key shortcuts if user is typing in an input
+      const isInputFocused = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+      const hasModifier = e.ctrlKey || e.altKey || e.metaKey;
+      
+      if (isInputFocused && !hasModifier) {
+        return;
+      }
+
+      const checkShortcut = (shortcutName: keyof Shortcuts, targetView: AppView, targetMode: 'POS' | 'ADMIN') => {
+        const configuredShortcut = profile.shortcuts?.[shortcutName];
+        if (configuredShortcut && normalizeShortcut(configuredShortcut) === pressedShortcut) {
+          e.preventDefault();
+          if (targetMode === 'ADMIN' && appMode !== 'ADMIN') {
+            setPendingAdminView(targetView);
+            setIsPinModalOpen(true);
+          } else {
+            setAppMode(targetMode);
+            setView(targetView);
+          }
+        }
+      };
+
+      checkShortcut('pos', AppView.POS, 'POS');
+      checkShortcut('inventory', AppView.INVENTORY, 'ADMIN');
+      checkShortcut('dashboard', AppView.DASHBOARD, 'ADMIN');
+      checkShortcut('finance', AppView.FINANCE, 'ADMIN');
+      checkShortcut('settings', AppView.SETTINGS, 'ADMIN');
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [profile.shortcuts, appMode]);
 
   // --- Handlers (Updated to write to DB) ---
 
@@ -687,9 +779,53 @@ const App = () => {
       const customer = customers.find(c => c.id === customerId);
       if (!customer) return;
 
+      let remainingAmount = amount;
+      let totalPaidToDebts = 0;
+      const updatedTxs: Transaction[] = [];
+
+      // Auto-clear debts if they exist
+      if (customer.totalDebt > 0 && remainingAmount > 0) {
+          const customerTxs = transactions.filter(t => t.customerId === customerId && t.status === 'Pending Debt');
+          
+          for (const tx of customerTxs.sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime())) {
+              if (remainingAmount <= 0) break;
+              
+              const debtRemaining = tx.total - (tx.amountPaid || 0);
+              if (debtRemaining <= 0) continue;
+              
+              const paymentAmount = Math.min(debtRemaining, remainingAmount);
+              remainingAmount -= paymentAmount;
+              totalPaidToDebts += paymentAmount;
+              
+              const newPayment: PaymentRecord = {
+                  id: generateId(),
+                  date: new Date().toISOString(),
+                  amount: paymentAmount,
+                  method
+              };
+              
+              const updatedTx = {
+                  ...tx,
+                  amountPaid: (tx.amountPaid || 0) + paymentAmount,
+                  status: ((tx.amountPaid || 0) + paymentAmount) >= tx.total ? 'Completed' : 'Pending Debt' as const,
+                  payments: [...(tx.payments || []), newPayment]
+              };
+              updatedTxs.push(updatedTx);
+          }
+          
+          if (updatedTxs.length > 0) {
+             setTransactions(prev => prev.map(t => {
+                 const updated = updatedTxs.find(ut => ut.id === t.id);
+                 return updated || t;
+             }));
+             await Promise.all(updatedTxs.map(tx => db.saveTransaction(tx)));
+          }
+      }
+
       const updatedCustomer = {
           ...customer,
-          creditBalance: (customer.creditBalance || 0) + amount,
+          totalDebt: Math.max(0, customer.totalDebt - totalPaidToDebts),
+          creditBalance: (customer.creditBalance || 0) + remainingAmount,
           lastTransactionDate: new Date().toISOString()
       };
       
@@ -700,8 +836,10 @@ const App = () => {
       if (currentShift && currentShift.isOpen) {
           const updatedShift = {
               ...currentShift,
-              cashDeposits: (currentShift.cashDeposits || 0) + (method === 'Cash' ? amount : 0),
-              mpesaDeposits: (currentShift.mpesaDeposits || 0) + (method === 'M-Pesa' ? amount : 0),
+              // Only the "remainder" counts as a pure pre-payment / deposit of credit
+              cashDeposits: (currentShift.cashDeposits || 0) + (method === 'Cash' ? remainingAmount : 0),
+              mpesaDeposits: (currentShift.mpesaDeposits || 0) + (method === 'M-Pesa' ? remainingAmount : 0),
+              // The entire amount entered the drawer/till regardless of whether it paid debt or deposited credit
               closingCashCalculated: currentShift.closingCashCalculated + (method === 'Cash' ? amount : 0),
               closingMpesaCalculated: currentShift.closingMpesaCalculated + (method === 'M-Pesa' ? amount : 0)
           };
@@ -718,6 +856,16 @@ const App = () => {
       } catch (error) {
           console.error("Failed to delete customer from DB", error);
           alert("Error deleting customer from database. Please reload.");
+      }
+  }
+
+  const handleUpdateCustomer = async (customer: Customer) => {
+      setCustomers(prev => prev.map(c => c.id === customer.id ? customer : c));
+      try {
+          await db.saveCustomer(customer);
+      } catch (error) {
+          console.error("Failed to update customer in DB", error);
+          alert("Error updating customer in database. Please reload.");
       }
   }
 
@@ -855,6 +1003,67 @@ const App = () => {
       const updatedTx = { ...tx, dueDate };
       setTransactions(prev => prev.map(t => t.id === transactionId ? updatedTx : t));
       await db.saveTransaction(updatedTx);
+    }
+  };
+
+  const handleSettleAllDebt = async (customerId: string, method: 'Cash' | 'M-Pesa') => {
+    const customerTxs = transactions.filter(t => t.customerId === customerId && t.status !== 'Completed' && t.status !== 'Refunded');
+    
+    let totalPaid = 0;
+    const updatedTxs = customerTxs.map(tx => {
+        const remaining = tx.total - (tx.amountPaid || 0);
+        if (remaining <= 0) return tx;
+        
+        totalPaid += remaining;
+        const newPayment: PaymentRecord = {
+            id: generateId(),
+            date: new Date().toISOString(),
+            amount: remaining,
+            method
+        };
+        return {
+            ...tx,
+            amountPaid: tx.total,
+            status: 'Completed' as const,
+            payments: [...(tx.payments || []), newPayment]
+        };
+    });
+
+    if (totalPaid <= 0) return;
+
+    // Update Transactions
+    setTransactions(prev => prev.map(t => {
+        const updated = updatedTxs.find(ut => ut.id === t.id);
+        return updated || t;
+    }));
+    
+    // Save to DB
+    await Promise.all(updatedTxs.map(tx => db.saveTransaction(tx)));
+
+    // Update Customer
+    const customer = customers.find(c => c.id === customerId);
+    if (customer) {
+        const updatedCustomer = {
+            ...customer,
+            totalDebt: 0,
+            lastTransactionDate: new Date().toISOString()
+        };
+        setCustomers(prev => prev.map(c => c.id === customerId ? updatedCustomer : c));
+        await db.saveCustomer(updatedCustomer);
+    }
+
+    // Update Shift
+    if (currentShift) {
+        const updatedShift = { ...currentShift };
+        if (method === 'Cash') {
+            updatedShift.cashSales += totalPaid;
+            updatedShift.closingCashCalculated += totalPaid;
+        } else {
+            updatedShift.mpesaSales += totalPaid;
+            updatedShift.closingMpesaCalculated += totalPaid;
+        }
+        setCurrentShift(updatedShift);
+        await db.saveShift(updatedShift);
     }
   };
 
@@ -1046,11 +1255,47 @@ const App = () => {
     }
   };
 
+  const handleSoundUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 2000000) { // 2MB limit check
+        alert("Audio file is too large. Please use a file under 2MB.");
+        return;
+      }
+      const reader = new FileReader();
+      reader.onloadend = async () => {
+        const newProfile = { ...profile, customSaleSound: reader.result as string };
+        setProfile(newProfile);
+        await db.saveProfile(newProfile);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
   // Update Settings (Profile)
   const handleUpdateProfile = async (newProfile: StoreProfile) => {
       setProfile(newProfile);
       await db.saveProfile(newProfile);
   }
+
+  const handleLogMissedSale = async (itemName: string, quantityRequested: number, buyPrice: number, sellPrice: number) => {
+    // Exact profit calculation: (Sell - Buy) * Qty
+    const lostProfit = quantityRequested * (sellPrice - buyPrice);
+    
+    const newMissedSale: MissedSale = {
+      id: generateId(),
+      timestamp: new Date().toISOString(),
+      itemName,
+      quantityRequested,
+      projectedBuyPrice: buyPrice,
+      projectedSellPrice: sellPrice,
+      estimatedPrice: sellPrice, // Use sell price as the estimated price for legacy analytics
+      lostProfit
+    };
+
+    setMissedSales(prev => [...prev, newMissedSale]);
+    await db.saveMissedSale(newMissedSale);
+  };
   
   const handleExportData = async () => {
     const stockLogs = await db.getStockLogs();
@@ -1109,7 +1354,8 @@ const App = () => {
 
   const handleAdminSuccess = () => {
     setAppMode('ADMIN');
-    setView(AppView.DASHBOARD);
+    setView(pendingAdminView || AppView.DASHBOARD);
+    setPendingAdminView(null);
     setIsPinModalOpen(false);
   }
 
@@ -1119,10 +1365,30 @@ const App = () => {
     .filter(t => t.date.startsWith(today) && t.status !== 'Refunded')
     .reduce((acc, t) => acc + t.total, 0), [transactions, today]);
 
+  const lastWeekTargetTime = useMemo(() => {
+    if (!profile.dailySalesTarget) return null;
+    const lastWeekDate = new Date();
+    lastWeekDate.setDate(lastWeekDate.getDate() - 7);
+    const lastWeekDateString = lastWeekDate.toISOString().split('T')[0];
+
+    const lastWeekTransactions = transactions
+      .filter(t => t.date.startsWith(lastWeekDateString) && t.status !== 'Refunded')
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    
+    let accumulated = 0;
+    for (const t of lastWeekTransactions) {
+      accumulated += t.total;
+      if (accumulated >= profile.dailySalesTarget) {
+        return new Date(t.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      }
+    }
+    return null;
+  }, [transactions, profile.dailySalesTarget]);
+
   // Loading Screen
   if (isLoading) {
       return (
-          <div className="min-h-screen flex flex-col items-center justify-center bg-[#F0F2F5] dark:bg-black text-gray-800 dark:text-white">
+          <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 dark:bg-black text-gray-800 dark:text-white">
               <Loader2 className="w-12 h-12 animate-spin text-primary-600 mb-4" />
               <h2 className="text-xl font-bold animate-pulse">Loading DukaManager...</h2>
               <p className="text-sm text-gray-500">Setting up secure storage</p>
@@ -1237,6 +1503,41 @@ const App = () => {
             </div>
         </div>
 
+        {/* Keyboard Shortcuts Section */}
+        <div className="pt-4 border-t border-gray-100 dark:border-gray-800">
+           <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
+                <Keyboard className="w-5 h-5 text-blue-500" />
+                Keyboard Shortcuts
+            </h3>
+            <div className="grid grid-cols-2 gap-4">
+              {[
+                { key: 'pos', label: 'POS View' },
+                { key: 'dashboard', label: 'Dashboard View' },
+                { key: 'inventory', label: 'Inventory View' },
+                { key: 'finance', label: 'Finance View' },
+                { key: 'settings', label: 'Settings View' }
+              ].map(shortcut => (
+                <div key={shortcut.key}>
+                  <label className="block text-sm font-bold mb-2 dark:text-gray-300">{shortcut.label}</label>
+                  <input 
+                    type="text" 
+                    value={profile.shortcuts?.[shortcut.key as keyof Shortcuts] || ''} 
+                    onChange={e => handleUpdateProfile({
+                      ...profile, 
+                      shortcuts: { 
+                        ...(profile.shortcuts || { pos: 'Alt+1', inventory: 'Alt+2', dashboard: 'Alt+3', finance: 'Alt+4', settings: 'Alt+5' }), 
+                        [shortcut.key]: e.target.value 
+                      }
+                    })}
+                    placeholder="e.g. Alt+1"
+                    className="w-full p-3 border border-gray-300 dark:border-gray-700 rounded-xl dark:bg-gray-950 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none transition-all font-mono text-sm"
+                  />
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-gray-400 mt-2">Use combinations like "Alt+1", "Ctrl+Shift+P", etc.</p>
+        </div>
+
         <div>
            <label className="block text-sm font-bold mb-2 dark:text-gray-300">Store Logo</label>
            <div className="flex gap-6 items-center p-4 border border-dashed border-gray-300 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-black/20">
@@ -1253,6 +1554,72 @@ const App = () => {
                 />
              </label>
            </div>
+        </div>
+
+        <div>
+           <label className="block text-sm font-bold mb-2 dark:text-gray-300">Custom Sale Sound (Optional)</label>
+           <div className="flex gap-6 items-center p-4 border border-dashed border-gray-300 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-black/20">
+             <div className="flex-1">
+               <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                 {profile.customSaleSound ? 'Custom sound loaded.' : 'Using default cha-ching sound.'}
+               </p>
+               <div className="flex gap-3">
+                 <label className="cursor-pointer bg-white dark:bg-gray-800 px-5 py-3 rounded-xl text-sm hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-white transition-all border border-gray-200 dark:border-gray-700 font-bold shadow-sm">
+                    <Upload className="w-4 h-4 inline mr-2" />
+                    Upload Audio
+                    <input 
+                      type="file" 
+                      accept="audio/*"
+                      className="hidden" 
+                      onChange={handleSoundUpload} 
+                    />
+                 </label>
+                 {profile.customSaleSound && (
+                   <button 
+                     onClick={async () => {
+                       const newProfile = { ...profile, customSaleSound: undefined };
+                       setProfile(newProfile);
+                       await db.saveProfile(newProfile);
+                     }}
+                     className="bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400 px-5 py-3 rounded-xl text-sm hover:bg-red-100 dark:hover:bg-red-900/40 transition-all font-bold shadow-sm"
+                   >
+                     Reset to Default
+                   </button>
+                 )}
+               </div>
+             </div>
+           </div>
+        </div>
+
+        {/* Reinvestment Sprint Section */}
+        <div className="pt-8 border-t border-gray-100 dark:border-gray-800">
+             <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
+                <Target className="w-5 h-5 text-emerald-500" />
+                6-Month Reinvestment Sprint
+            </h3>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-bold mb-2 dark:text-gray-300">Target Savings ({profile.currency})</label>
+                <input 
+                  type="number" 
+                  value={profile.personalSavingsGoal || ''} 
+                  onChange={e => handleUpdateProfile({...profile, personalSavingsGoal: Number(e.target.value)})}
+                  placeholder="e.g. 50000"
+                  className="w-full p-3 border border-gray-300 dark:border-gray-700 rounded-xl dark:bg-gray-950 dark:text-white focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-bold mb-2 dark:text-gray-300">Current Savings ({profile.currency})</label>
+                <input 
+                  type="number" 
+                  value={profile.currentPersonalSavings || ''} 
+                  onChange={e => handleUpdateProfile({...profile, currentPersonalSavings: Number(e.target.value)})}
+                  placeholder="e.g. 5000"
+                  className="w-full p-3 border border-gray-300 dark:border-gray-700 rounded-xl dark:bg-gray-950 dark:text-white focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                />
+              </div>
+            </div>
+            <p className="text-xs text-gray-400 mt-2">Track your personal savings progress alongside captured opportunity costs.</p>
         </div>
 
         {/* Special Days Section */}
@@ -1363,10 +1730,10 @@ const App = () => {
   };
 
   return (
-    <div className="flex h-screen bg-[#F0F2F5] dark:bg-black text-gray-900 dark:text-gray-100 font-sans overflow-hidden transition-colors">
+    <div className="flex h-screen bg-slate-50 dark:bg-black text-gray-900 dark:text-gray-100 font-sans overflow-hidden transition-colors">
       <PinEntryModal 
         isOpen={isPinModalOpen} 
-        onClose={() => setIsPinModalOpen(false)} 
+        onClose={() => { setIsPinModalOpen(false); setPendingAdminView(null); }} 
         onSuccess={handleAdminSuccess}
         correctPin={profile.adminPin || "1234"}
       />
@@ -1483,26 +1850,61 @@ const App = () => {
                <div className="w-10 h-10 rounded-xl bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center">
                   <img src={profile.logoUrl} alt="Logo" className="w-full h-full object-contain p-1 opacity-90" />
                </div>
-               <div>
+               <div className="flex flex-col justify-center">
+                  <span className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-0.5">
+                    {(() => {
+                      const hour = new Date().getHours();
+                      if (hour < 12) return 'Good morning,';
+                      if (hour < 18) return 'Good afternoon,';
+                      return 'Good evening,';
+                    })()}
+                  </span>
                   <h1 className="font-black text-lg tracking-tight leading-none text-gray-900 dark:text-white">{profile.name}</h1>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 font-medium">{profile.location} • Selling Mode</p>
                </div>
             </div>
             
             {/* Sales Target Progress (Centered) */}
             {profile.dailySalesTarget && profile.dailySalesTarget > 0 && (
-                <div className="hidden md:flex flex-1 flex-col justify-center max-w-sm mx-auto">
+                <div className="hidden md:flex flex-1 flex-col justify-center max-w-xl mx-auto px-4">
                     <div className="flex justify-between text-[10px] font-bold uppercase tracking-wider mb-1 text-gray-500 dark:text-gray-400">
-                        <span>Daily Target</span>
-                        <span className={todaySales >= profile.dailySalesTarget ? "text-green-600" : ""}>
-                            {Math.round((todaySales / profile.dailySalesTarget) * 100)}%
+                        <span className={
+                            todaySales >= profile.dailySalesTarget 
+                            ? 'text-emerald-600 dark:text-emerald-400' 
+                            : todaySales >= profile.dailySalesTarget * 0.75
+                                ? 'text-lime-600 dark:text-lime-400'
+                                : todaySales >= profile.dailySalesTarget * 0.5
+                                ? 'text-yellow-600 dark:text-yellow-400'
+                                : 'text-orange-600 dark:text-orange-400'
+                        }>
+                            {profile.currency} {todaySales.toLocaleString()} / {profile.dailySalesTarget.toLocaleString()}
+                        </span>
+                        <span className={todaySales >= profile.dailySalesTarget ? "text-emerald-600 dark:text-emerald-400" : "text-gray-600 dark:text-gray-300"}>
+                            {todaySales < profile.dailySalesTarget ? `${profile.currency} ${(profile.dailySalesTarget - todaySales).toLocaleString()} to go` : 'Target Reached!'}
                         </span>
                     </div>
-                    <div className="h-2 w-full bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
-                        <div 
-                            className={`h-full rounded-full transition-all duration-1000 ${todaySales >= profile.dailySalesTarget ? 'bg-green-500' : 'bg-primary-500'}`} 
-                            style={{ width: `${Math.min(100, (todaySales / profile.dailySalesTarget) * 100)}%` }}
-                        ></div>
+                    <div className="flex items-center gap-3">
+                        <div className="h-2 flex-1 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden relative">
+                            <div 
+                                className={`h-full rounded-full transition-all duration-1000 ease-out relative ${
+                                  todaySales >= profile.dailySalesTarget 
+                                    ? 'bg-emerald-500' 
+                                    : todaySales >= profile.dailySalesTarget * 0.75
+                                      ? 'bg-lime-500'
+                                      : todaySales >= profile.dailySalesTarget * 0.5
+                                        ? 'bg-yellow-500'
+                                        : 'bg-orange-500'
+                                }`} 
+                                style={{ width: `${Math.min(100, (todaySales / profile.dailySalesTarget) * 100)}%` }}
+                            >
+                                <div className="absolute inset-0 bg-white/20 animate-pulse"></div>
+                            </div>
+                        </div>
+                        {lastWeekTargetTime && (
+                            <p className="text-[10px] text-gray-500 dark:text-gray-400 font-medium flex items-center gap-1 whitespace-nowrap">
+                                <Calendar className="w-3 h-3 opacity-70" /> 
+                                Last week: <span className="font-bold text-gray-700 dark:text-gray-300">{lastWeekTargetTime}</span>
+                            </p>
+                        )}
                     </div>
                 </div>
             )}
@@ -1560,6 +1962,7 @@ const App = () => {
                 onCompleteSale={handleSale} 
                 onRecordExpense={handleExpense}
                 storeProfile={profile}
+                onLogMissedSale={handleLogMissedSale}
                 // Removed backup/restore props as they are now in Admin -> Settings
               />
             )}
@@ -1573,6 +1976,7 @@ const App = () => {
                 currentShift={currentShift} 
                 stockLogs={stockLogs}
                 customers={customers}
+                missedSales={missedSales}
                 onNavigate={(view) => setView(view)}
                 onUpdateProfile={handleUpdateProfile} 
               />
@@ -1597,12 +2001,14 @@ const App = () => {
                 shift={currentShift}
                 customers={customers}
                 onAddCustomer={handleAddCustomer}
+                onUpdateCustomer={handleUpdateCustomer}
                 onDeleteCustomer={handleDeleteCustomer}
                 onCustomerDeposit={handleCustomerDeposit}
                 onOpenShift={handleOpenShift} 
                 onCloseShift={handleCloseShift}
                 onUpdateShift={handleUpdateShift}
                 onPayDebt={handlePayDebt}
+                onSettleAllDebt={handleSettleAllDebt}
                 onRefund={handleRefund}
                 onRecordExpense={handleExpense}
                 onSetDueDate={handleSetDueDate}

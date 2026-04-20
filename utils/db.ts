@@ -1,6 +1,6 @@
 
 import { openDB, DBSchema, deleteDB } from 'idb';
-import { Product, Transaction, ShiftRecord, StoreProfile, StockLog, Customer } from '../types';
+import { Product, Transaction, ShiftRecord, StoreProfile, StockLog, Customer, MissedSale } from '../types';
 
 interface DukaDB extends DBSchema {
   products: {
@@ -28,11 +28,16 @@ interface DukaDB extends DBSchema {
   customers: {
     key: string;
     value: Customer;
-  }
+  };
+  missed_sales: {
+    key: string;
+    value: MissedSale;
+    indexes: { 'by-date': string };
+  };
 }
 
 const DB_NAME = 'duka-manager-db';
-const DB_VERSION = 4; // Incrementing to version 4 to force update
+const DB_VERSION = 5; // Incrementing to version 5 to force update
 
 export const initDB = async () => {
   return openDB<DukaDB>(DB_NAME, DB_VERSION, {
@@ -57,6 +62,10 @@ export const initDB = async () => {
       }
       if (!db.objectStoreNames.contains('customers')) {
         db.createObjectStore('customers', { keyPath: 'id' });
+      }
+      if (!db.objectStoreNames.contains('missed_sales')) {
+        const msStore = db.createObjectStore('missed_sales', { keyPath: 'id' });
+        msStore.createIndex('by-date', 'timestamp');
       }
     },
   });
@@ -174,6 +183,17 @@ export const saveCustomer = async (customer: Customer) => {
 export const deleteCustomer = async (id: string) => {
   const db = await initDB();
   return db.delete('customers', id);
+};
+
+// MISSED SALES
+export const getAllMissedSales = async () => {
+  const db = await initDB();
+  return db.getAllFromIndex('missed_sales', 'by-date');
+};
+
+export const saveMissedSale = async (missedSale: MissedSale) => {
+  const db = await initDB();
+  return db.put('missed_sales', missedSale);
 };
 
 // RESET

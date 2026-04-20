@@ -1,13 +1,14 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, PieChart, Pie, Cell, Legend, ComposedChart, Line } from 'recharts';
-import { TrendingUp, DollarSign, AlertCircle, ShoppingBag, Sparkles, Loader2, Target, Edit3, PieChart as PieChartIcon, CreditCard, FileDown, Calendar, Wallet, Banknote, TrendingDown, ArrowRight, AlertTriangle, X, Check, AlertOctagon, Package, Activity, ChevronDown, Filter } from 'lucide-react';
-import { Product, Transaction, StoreProfile, AppView, ShiftRecord, StockLog, Customer } from '../types';
+import { TrendingUp, DollarSign, AlertCircle, ShoppingBag, Sparkles, Loader2, Target, Edit3, PieChart as PieChartIcon, CreditCard, FileDown, Calendar, Wallet, Banknote, TrendingDown, ArrowRight, AlertTriangle, X, Check, AlertOctagon, Package, Activity, ChevronDown, Filter, Search } from 'lucide-react';
+import { Product, Transaction, StoreProfile, AppView, ShiftRecord, StockLog, Customer, MissedSale } from '../types';
 import * as db from '../utils/db';
-import { getBusinessInsights } from '../services/geminiService';
+import { getBusinessInsights, createBusinessChat } from '../services/geminiService';
 import confetti from 'canvas-confetti';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
+import { Chat } from '@google/genai';
 
 interface DashboardProps {
   products: Product[];
@@ -16,15 +17,20 @@ interface DashboardProps {
   currentShift: ShiftRecord | null;
   stockLogs: StockLog[];
   customers: Customer[];
+  missedSales?: MissedSale[];
   onNavigate: (view: AppView) => void;
-  onUpdateProfile?: (profile: StoreProfile) => void;
+  onUpdateProfile: (profile: StoreProfile) => void;
 }
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#06b6d4', '#f43f5e', '#84cc16'];
 const PIE_COLORS = ['#3b82f6', '#10b981', '#ef4444', '#f59e0b', '#8b5cf6']; // Cash(Blue), Mpesa(Green), Credit(Red), Split(Orange), Other(Violet)
 
-export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, storeProfile, currentShift, stockLogs, customers, onNavigate, onUpdateProfile }) => {
+export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, storeProfile, currentShift, stockLogs, customers, missedSales = [], onNavigate, onUpdateProfile }) => {
   const [insight, setInsight] = useState<string | null>(null);
+  const [chatSession, setChatSession] = useState<Chat | null>(null);
+  const [chatMessages, setChatMessages] = useState<{role: 'user' | 'ai', text: string}[]>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [isSendingMessage, setIsSendingMessage] = useState(false);
   const [loadingInsight, setLoadingInsight] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [salesView, setSalesView] = useState<'weekly' | 'monthly' | 'yearly'>('weekly');
@@ -45,6 +51,61 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
   const todayTransactions = transactions.filter(t => t.date.startsWith(today) && t.status !== 'Refunded');
   
   const todaySales = todayTransactions.reduce((acc, t) => acc + t.total, 0);
+
+  // --- Missed Sales Intelligence ---
+  const missedSalesIntelligence = useMemo(() => {
+    const items: Record<string, { name: string, dates: Set<string>, totalLost: number, count: number }> = {};
+    
+    missedSales.forEach(sale => {
+      const date = sale.timestamp.split('T')[0];
+      if (!items[sale.itemName]) {
+        items[sale.itemName] = { name: sale.itemName, dates: new Set(), totalLost: 0, count: 0 };
+      }
+      items[sale.itemName].dates.add(date);
+      items[sale.itemName].totalLost += sale.lostProfit;
+      items[sale.itemName].count += 1;
+    });
+
+    const flaggedItems = Object.values(items).map(item => {
+      // 3-Day Rule check: Flag if logged on 3 or more different days
+      const isReinvestmentTarget = item.dates.size >= 3;
+      
+      // Bulk vs Daily logic
+      const bulkItems = ['Sugar', 'Flour', 'Detergent', 'Cooking Oil', 'Rice', 'Soap', 'Salt'];
+      const dailyItems = ['Milk', 'Bread', 'Eggs', 'Vegetables', 'Fruit', 'Yogurt'];
+      
+      let strategy: 'Bulk Batch Buying' | 'Inventory Volume Adjustment' | 'Evaluate' = 'Evaluate';
+      if (bulkItems.some(bi => item.name.toLowerCase().includes(bi.toLowerCase()))) {
+        strategy = 'Bulk Batch Buying';
+      } else if (dailyItems.some(di => item.name.toLowerCase().includes(di.toLowerCase()))) {
+        strategy = 'Inventory Volume Adjustment';
+      }
+
+      return {
+        ...item,
+        isReinvestmentTarget,
+        strategy
+      };
+    }).filter(i => i.isReinvestmentTarget);
+
+    return flaggedItems;
+  }, [missedSales]);
+
+  // Calculate All-Time High Sales
+  const allTimeHighSales = useMemo(() => {
+    const dailyTotals: Record<string, number> = {};
+    transactions.forEach(t => {
+      if (t.status === 'Refunded') return;
+      const date = t.date.split('T')[0];
+      if (date !== today) { // Only consider past days for the record
+        dailyTotals[date] = (dailyTotals[date] || 0) + t.total;
+      }
+    });
+    const maxHistorical = Math.max(0, ...Object.values(dailyTotals));
+    return maxHistorical;
+  }, [transactions, today]);
+
+  const isAllTimeHigh = todaySales > 0 && todaySales >= allTimeHighSales && allTimeHighSales > 0;
   
   // Comparative Data (Last Week Same Day & SAME TIME)
   const now = new Date();
@@ -89,6 +150,26 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
   const salesTarget = storeProfile.dailySalesTarget || 0;
   const progressPercent = salesTarget > 0 ? Math.min(100, (todaySales / salesTarget) * 100) : 0;
   const isTargetMet = salesTarget > 0 && todaySales >= salesTarget;
+
+  const lastWeekTargetTime = useMemo(() => {
+    if (!salesTarget) return null;
+    const lastWeekDate = new Date();
+    lastWeekDate.setDate(lastWeekDate.getDate() - 7);
+    const lastWeekDateString = lastWeekDate.toISOString().split('T')[0];
+
+    const lastWeekTransactions = transactions
+      .filter(t => t.date.startsWith(lastWeekDateString) && t.status !== 'Refunded')
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    
+    let accumulated = 0;
+    for (const t of lastWeekTransactions) {
+      accumulated += t.total;
+      if (accumulated >= salesTarget) {
+        return new Date(t.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      }
+    }
+    return null;
+  }, [transactions, salesTarget]);
 
   // Collection Breakdown
   const cashCollected = todayTransactions.reduce((acc, t) => {
@@ -231,7 +312,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
 
   // --- 3. Inventory Health ---
   const totalStockValue = products.reduce((acc, p) => acc + (p.buyPrice * p.stock), 0);
-  const lowStockItems = products.filter(p => p.stock <= 5 && p.stock > 0);
+  const lowStockItems = products.filter(p => (p.reorderPoint !== undefined ? p.stock <= p.reorderPoint : p.stock <= 5) && p.stock > 0);
   const outOfStockItems = products.filter(p => p.stock <= 0);
 
   // Expiring Soon (Next 2 Days)
@@ -537,9 +618,40 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
 
   const fetchInsight = async () => {
     setLoadingInsight(true);
-    const result = await getBusinessInsights(transactions, products);
-    setInsight(result);
+    try {
+      const chat = createBusinessChat(transactions, products);
+      if (chat) {
+        setChatSession(chat);
+        const response = await chat.sendMessage({ message: "Provide 3 brief, actionable insights or tips (bullet points) to improve profit, manage stock, or handle cash flow better. Keep it encouraging and professional." });
+        setChatMessages([{ role: 'ai', text: response.text || "No insights available at the moment." }]);
+        setInsight(response.text || "No insights available at the moment.");
+      } else {
+        setInsight("Please configure your API Key to receive AI insights.");
+      }
+    } catch (error) {
+      console.error("Gemini Error:", error);
+      setInsight("Unable to fetch insights. Please check your internet connection.");
+    }
     setLoadingInsight(false);
+  };
+
+  const handleSendMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!chatInput.trim() || !chatSession) return;
+
+    const userMsg = chatInput;
+    setChatInput('');
+    setChatMessages(prev => [...prev, { role: 'user', text: userMsg }]);
+    setIsSendingMessage(true);
+
+    try {
+      const response = await chatSession.sendMessage({ message: userMsg });
+      setChatMessages(prev => [...prev, { role: 'ai', text: response.text || "I'm sorry, I couldn't generate a response." }]);
+    } catch (error) {
+      console.error("Chat Error:", error);
+      setChatMessages(prev => [...prev, { role: 'ai', text: "Error communicating with AI." }]);
+    }
+    setIsSendingMessage(false);
   };
 
   // Custom Tooltips
@@ -634,7 +746,41 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
              </h3>
              <div className="prose prose-sm dark:prose-invert text-gray-700 dark:text-gray-300 font-medium max-w-none">
                 {insight ? (
-                    <div className="whitespace-pre-line">{insight}</div>
+                    <div className="flex flex-col h-full max-h-[400px]">
+                        <div className="flex-1 overflow-y-auto pr-2 space-y-4 mb-4 custom-scrollbar">
+                            {chatMessages.map((msg, idx) => (
+                                <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                                    <div className={`max-w-[85%] rounded-2xl px-4 py-3 ${msg.role === 'user' ? 'bg-indigo-600 text-white rounded-br-none' : 'bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 rounded-bl-none shadow-sm border border-gray-100 dark:border-gray-700'}`}>
+                                        <div className="whitespace-pre-line text-sm">{msg.text}</div>
+                                    </div>
+                                </div>
+                            ))}
+                            {isSendingMessage && (
+                                <div className="flex justify-start">
+                                    <div className="bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 rounded-2xl rounded-bl-none px-4 py-3 shadow-sm border border-gray-100 dark:border-gray-700">
+                                        <Loader2 className="w-4 h-4 animate-spin" />
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                        <form onSubmit={handleSendMessage} className="flex gap-2 mt-auto">
+                            <input 
+                                type="text" 
+                                value={chatInput}
+                                onChange={e => setChatInput(e.target.value)}
+                                placeholder="Ask a follow-up question..."
+                                className="flex-1 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:text-white"
+                                disabled={isSendingMessage}
+                            />
+                            <button 
+                                type="submit" 
+                                disabled={isSendingMessage || !chatInput.trim()}
+                                className="bg-indigo-600 text-white p-2 rounded-xl hover:bg-indigo-700 transition-colors disabled:opacity-50"
+                            >
+                                <ArrowRight className="w-5 h-5" />
+                            </button>
+                        </form>
+                    </div>
                 ) : (
                     <p>
                         Welcome back! {hasCashVariance || hasMpesaVariance ? "There are cash discrepancies today." : "Everything looks balanced so far."}
@@ -710,43 +856,65 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
       {/* 2. FINANCIAL TRUTHS (Cards) */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
          {/* Sales & Profit Card - Combined for maximum utility */}
-         <div className="bg-white dark:bg-gray-800 rounded-2xl p-6 shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700 flex flex-col justify-between relative overflow-hidden">
+         <div className={`rounded-2xl p-6 shadow-[0_4px_12px_rgba(0,0,0,0.08)] border flex flex-col justify-between relative overflow-hidden transition-all ${
+             isAllTimeHigh 
+                ? 'bg-gradient-to-br from-yellow-400 via-yellow-500 to-yellow-600 border-yellow-300 dark:border-yellow-500 shadow-yellow-500/30' 
+                : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700'
+         }`}>
             {/* Background decoration for target met */}
-            {isTargetMet && <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 rounded-full blur-3xl -mr-10 -mt-10 pointer-events-none"></div>}
+            {isAllTimeHigh && <div className="absolute top-0 right-0 w-32 h-32 bg-white/20 rounded-full blur-3xl -mr-10 -mt-10 pointer-events-none"></div>}
+            {!isAllTimeHigh && isTargetMet && <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 rounded-full blur-3xl -mr-10 -mt-10 pointer-events-none"></div>}
             
             <div>
                 <div className="flex justify-between items-start mb-4">
                     <div>
-                        <p className="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">Today's Sales</p>
-                        <h2 className="text-3xl font-black text-gray-900 dark:text-white mt-1">{storeProfile.currency} {todaySales.toLocaleString()}</h2>
+                        <div className="flex items-center gap-2">
+                            <p className={`text-xs font-bold uppercase tracking-wider ${isAllTimeHigh ? 'text-yellow-900/80' : 'text-gray-500 dark:text-gray-400'}`}>Today's Sales</p>
+                            {isAllTimeHigh && <span className="bg-yellow-100 text-yellow-800 text-[9px] font-bold px-1.5 py-0.5 rounded-sm uppercase tracking-widest">All-Time High</span>}
+                        </div>
+                        <h2 className={`text-3xl font-black mt-1 ${isAllTimeHigh ? 'text-white drop-shadow-md' : 'text-gray-900 dark:text-white'}`}>{storeProfile.currency} {todaySales.toLocaleString()}</h2>
                         
                         {/* Percentage Change Indicator */}
-                        <div className={`flex items-center gap-1 mt-2 text-xs font-bold ${salesGrowth >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+                        <div className={`flex items-center gap-1 mt-2 text-xs font-bold ${isAllTimeHigh ? 'text-yellow-100' : (salesGrowth >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400')}`}>
                             {salesGrowth >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
                             <span>{Math.abs(salesGrowth).toFixed(1)}%</span>
-                            <span className="text-gray-400 font-normal">vs. last {lastWeekDayName} same time</span>
+                            <span className={`font-normal ${isAllTimeHigh ? 'text-yellow-800/60' : 'text-gray-400'}`}>vs. last {lastWeekDayName} same time</span>
                         </div>
                     </div>
-                    <div className={`p-3 rounded-xl ${isTargetMet ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-indigo-50 text-indigo-600 dark:bg-indigo-900/20 dark:text-indigo-400'}`}>
+                    <div className={`p-3 rounded-xl relative ${isAllTimeHigh ? 'bg-white/20 text-white' : (isTargetMet ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-indigo-50 text-indigo-600 dark:bg-indigo-900/20 dark:text-indigo-400')}`}>
+                        {isAllTimeHigh && <Sparkles className="w-4 h-4 absolute -top-1 -right-1 text-yellow-200 animate-pulse" />}
                         {isTargetMet ? <Target className="w-6 h-6" /> : <ShoppingBag className="w-6 h-6" />}
                     </div>
                 </div>
 
                 {/* Target Progress */}
                 {salesTarget > 0 && (
-                    <div className="mb-4">
+                    <div className="mb-4 relative">
                         <div className="flex justify-between text-[10px] font-bold uppercase tracking-wider mb-1.5">
                             <span className="text-gray-400">Daily Target</span>
                             <span className={isTargetMet ? "text-emerald-600 dark:text-emerald-400" : "text-gray-600 dark:text-gray-300"}>
-                                {Math.round(progressPercent)}% of {storeProfile.currency} {salesTarget.toLocaleString()}
+                               {Math.round(progressPercent)}% of {storeProfile.currency} {salesTarget.toLocaleString()}
                             </span>
                         </div>
-                        <div className="h-2.5 w-full bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
+                        <div className="h-2.5 w-full bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden relative">
                             <div 
-                                className={`h-full rounded-full transition-all duration-1000 ease-out ${isTargetMet ? 'bg-gradient-to-r from-emerald-500 to-green-400' : 'bg-gradient-to-r from-indigo-500 to-blue-500'}`}
+                                className={`h-full rounded-full transition-all duration-1000 ease-out relative ${isTargetMet ? 'bg-gradient-to-r from-emerald-500 to-green-400' : 'bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500'}`}
                                 style={{ width: `${progressPercent}%` }}
-                            ></div>
+                            >
+                                <div className="absolute inset-0 bg-white/20 animate-pulse"></div>
+                            </div>
                         </div>
+                        {isTargetMet && (
+                            <div className="absolute -top-2 -right-2 bg-yellow-400 text-yellow-900 text-[8px] font-black px-2 py-0.5 rounded-full shadow-md transform rotate-12 flex items-center gap-1 z-10 border border-yellow-300">
+                                <Sparkles className="w-2 h-2" /> TARGET MET!
+                            </div>
+                        )}
+                        {lastWeekTargetTime && (
+                            <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-1.5 font-medium flex items-center justify-end gap-1">
+                                <Calendar className="w-3 h-3 opacity-70" /> 
+                                Last week reached at <span className="font-bold text-gray-700 dark:text-gray-300">{lastWeekTargetTime}</span>
+                            </p>
+                        )}
                     </div>
                 )}
             </div>
@@ -818,41 +986,156 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
          </div>
       </div>
 
-      {/* 3. INVENTORY HEALTH ROW */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-         <div className="bg-white dark:bg-gray-800 p-5 rounded-xl border border-gray-200 dark:border-gray-700 shadow-[0_4px_12px_rgba(0,0,0,0.08)] flex items-center justify-between">
-            <div>
-                <p className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase">Total Stock Value</p>
-                <p className="text-xl font-black text-gray-900 dark:text-white mt-1">{storeProfile.currency} {totalStockValue.toLocaleString()}</p>
-            </div>
-            <div className="bg-blue-50 dark:bg-blue-900/20 p-2 rounded-lg text-blue-600">
-                <DollarSign className="w-5 h-5" />
-            </div>
-         </div>
-         <div 
-             className="bg-white dark:bg-gray-800 p-5 rounded-xl border border-gray-200 dark:border-gray-700 shadow-[0_4px_12px_rgba(0,0,0,0.08)] flex items-center justify-between cursor-pointer hover:border-amber-300 dark:hover:border-amber-700 transition-all hover:shadow-lg hover:-translate-y-0.5" 
-             onClick={() => setViewDetails({ title: 'Low Stock Risks', items: lowStockItems })}
-         >
-            <div>
-                <p className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase">Low Stock Risks</p>
-                <p className="text-xl font-black text-amber-600 dark:text-amber-400 mt-1">{lowStockItems.length} Items</p>
-            </div>
-            <div className="bg-amber-50 dark:bg-amber-900/20 p-2 rounded-lg text-amber-600">
-                <AlertCircle className="w-5 h-5" />
-            </div>
-         </div>
-         <div 
-             className="bg-white dark:bg-gray-800 p-5 rounded-xl border border-gray-200 dark:border-gray-700 shadow-[0_4px_12px_rgba(0,0,0,0.08)] flex items-center justify-between cursor-pointer hover:border-gray-300 dark:hover:border-gray-600 transition-all hover:shadow-lg hover:-translate-y-0.5"
-             onClick={() => setViewDetails({ title: 'Slow Moving Items (>30 Days)', items: slowMovingItems })}
-         >
-            <div>
-                <p className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase">Slow Moving (&gt;30 Days)</p>
-                <p className="text-xl font-black text-gray-900 dark:text-white mt-1">{storeProfile.currency} {slowMovingValue.toLocaleString()}</p>
-            </div>
-             <div className="bg-gray-100 dark:bg-gray-700 p-2 rounded-lg text-gray-600 dark:text-gray-300">
-                <TrendingDown className="w-5 h-5" />
-            </div>
-         </div>
+      {/* 3. STRATEGIC GROWTH HUB */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+             {/* Missed Sales & Reinvestment Sprint (2/3 width) */}
+             <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700 flex flex-col h-full lg:col-span-2">
+                 <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2 mb-6 uppercase text-sm tracking-widest">
+                    <Target className="w-5 h-5 text-purple-500" /> Reinvestment Sprint Intelligence
+                 </h3>
+                 <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    <div>
+                        <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-4">Opportunity Cost</h4>
+                        <div className="bg-purple-50 dark:bg-purple-900/10 border border-purple-100 dark:border-purple-900/30 rounded-xl p-4 flex items-center justify-between">
+                            <div>
+                                <p className="text-2xl font-black text-purple-600 dark:text-purple-400 tracking-tight">
+                                    {storeProfile.currency} {missedSales.reduce((acc, sale) => acc + sale.lostProfit, 0).toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 0})}
+                                </p>
+                                <p className="text-[9px] text-purple-500 dark:text-purple-500 mt-1 uppercase font-bold tracking-tighter">Lost Profit</p>
+                            </div>
+                            <div className="w-10 h-10 bg-purple-100 dark:bg-purple-900/50 rounded-full flex items-center justify-center">
+                                <TrendingDown className="w-5 h-5 text-purple-500" />
+                            </div>
+                        </div>
+                        
+                        <div className="mt-6">
+                            <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">Goal Progress</h4>
+                            <div className="bg-gray-100 dark:bg-gray-700 h-2 rounded-full overflow-hidden mb-2">
+                                <div 
+                                    className="h-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"
+                                    style={{ width: `${Math.min(100, ((storeProfile.currentPersonalSavings || 0) / (storeProfile.personalSavingsGoal || 1)) * 100)}%` }}
+                                ></div>
+                            </div>
+                            <div className="flex justify-between text-[10px] font-bold">
+                                <span className="text-gray-500">{(storeProfile.currentPersonalSavings || 0).toLocaleString()} saved</span>
+                                <span className="text-emerald-600">Goal: {(storeProfile.personalSavingsGoal || 0).toLocaleString()}</span>
+                            </div>
+                            <p className="text-[9px] text-gray-500 mt-3 font-medium bg-gray-50 dark:bg-gray-900/50 p-2 rounded-lg border border-gray-100 dark:border-gray-800 leading-tight">
+                                <span className="text-purple-600 font-bold uppercase tracking-tighter">Tip:</span> Capturing your lost profit would close the gap by <span className="text-purple-700 font-black">{(((missedSales.reduce((acc, sale) => acc + sale.lostProfit, 0)) / (storeProfile.personalSavingsGoal || 1)) * 100).toFixed(1)}%</span>!
+                            </p>
+                        </div>
+                    </div>
+                    
+                    <div>
+                        <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+                            <Sparkles className="w-4 h-4 text-amber-500" /> Stock Intelligence
+                        </h4>
+                        <div className="space-y-3">
+                            {missedSalesIntelligence.length > 0 ? (
+                                missedSalesIntelligence.slice(0, 2).map((item, idx) => (
+                                    <div key={idx} className="p-3 bg-amber-50/50 dark:bg-amber-900/10 border border-amber-100 dark:border-amber-900/30 rounded-xl relative overflow-hidden group">
+                                        <div className="absolute top-0 right-0 p-1">
+                                            <div className="bg-amber-500 text-[7px] text-white px-1.5 py-0.5 rounded-bl-lg font-black uppercase tracking-tighter">High Priority</div>
+                                        </div>
+                                        <p className="font-bold text-xs text-amber-900 dark:text-amber-100 truncate">{item.name}</p>
+                                        <p className="text-[9px] text-amber-700 dark:text-amber-400 font-medium mb-1">Missed {item.dates.size} days</p>
+                                        <div className="text-[8px] font-black uppercase px-2 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 inline-block">
+                                            {item.strategy}
+                                        </div>
+                                    </div>
+                                ))
+                            ) : (
+                                <div className="text-center py-6 border-2 border-dashed border-gray-100 dark:border-gray-800 rounded-xl">
+                                    <p className="text-[9px] text-gray-400 font-bold uppercase tracking-widest leading-tight">Data logging<br/>in progress...</p>
+                                </div>
+                            )}
+                            <div className="p-3 bg-blue-50 dark:bg-blue-900/10 border border-blue-100 dark:border-blue-900/30 rounded-xl text-[9px] text-blue-700 dark:text-blue-400 leading-tight">
+                                <strong className="block mb-1 text-blue-900 dark:text-blue-200 uppercase tracking-widest">The 3-Day Rule</strong>
+                                Bulk re-invest only after 3 missed days. Stock small volumes for daily items first.
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="bg-gray-50 dark:bg-gray-900/50 rounded-xl border border-gray-100 dark:border-gray-800 p-4">
+                        <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-4">Recent Missed</h4>
+                        <div className="space-y-2 overflow-y-auto max-h-[160px] custom-scrollbar pr-1">
+                            {missedSales.length > 0 ? (
+                                missedSales.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()).slice(0, 5).map(sale => (
+                                    <div key={sale.id} className="bg-white dark:bg-gray-800 p-2 rounded-lg border border-gray-100 dark:border-gray-700 shadow-sm flex items-center justify-between group h-10">
+                                        <p className="font-bold text-[10px] text-gray-800 dark:text-gray-200 truncate pr-2 flex-1">{sale.itemName}</p>
+                                        <div className="text-right shrink-0">
+                                            <p className="text-[9px] font-black text-red-500">-{sale.lostProfit.toFixed(0)}</p>
+                                        </div>
+                                    </div>
+                                ))
+                            ) : (
+                                <div className="text-center py-8 text-gray-300">
+                                    <Search className="w-5 h-5 mx-auto mb-1 opacity-20" />
+                                    <p className="text-[9px] uppercase font-bold tracking-widest">Empty</p>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                 </div>
+             </div>
+
+             {/* Stock Health Snapshot (1/3 width) */}
+             <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700 flex flex-col h-full">
+                <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2 mb-6 uppercase text-sm tracking-widest">
+                    <Package className="w-5 h-5 text-indigo-500" /> Stock Health
+                </h3>
+                
+                <div className="space-y-4">
+                    <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-900/50 rounded-xl border border-gray-100 dark:border-gray-800">
+                        <div>
+                            <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Total Value</p>
+                            <p className="text-xl font-black text-gray-900 dark:text-white">{storeProfile.currency} {totalStockValue.toLocaleString()}</p>
+                        </div>
+                        <div className="w-10 h-10 bg-indigo-50 dark:bg-indigo-900/20 rounded-full flex items-center justify-center text-indigo-600">
+                            <DollarSign className="w-5 h-5" />
+                        </div>
+                    </div>
+
+                    <div 
+                        className="flex items-center justify-between p-3 bg-amber-50 dark:bg-amber-900/10 rounded-xl border border-amber-100 dark:border-amber-900/30 cursor-pointer hover:bg-amber-100 transition-all shadow-sm"
+                        onClick={() => setViewDetails({ title: 'Low Stock Risks', items: lowStockItems })}
+                    >
+                        <div>
+                            <p className="text-[9px] font-black text-amber-600 uppercase tracking-widest">Low Stock</p>
+                            <p className="text-xl font-black text-amber-900 dark:text-amber-100">{lowStockItems.length} Items</p>
+                        </div>
+                        <div className="w-10 h-10 bg-amber-100 dark:bg-amber-900/30 rounded-full flex items-center justify-center text-amber-600">
+                            <AlertCircle className="w-5 h-5" />
+                        </div>
+                    </div>
+
+                    <div 
+                        className="flex items-center justify-between p-3 bg-orange-50 dark:bg-orange-900/10 rounded-xl border border-orange-100 dark:border-orange-900/30 cursor-pointer hover:bg-orange-100 transition-all shadow-sm"
+                        onClick={() => setViewDetails({ title: 'Expiring Items', items: expiringSoonItems })}
+                    >
+                        <div>
+                            <p className="text-[9px] font-black text-orange-600 uppercase tracking-widest">Expiring Soon</p>
+                            <p className="text-xl font-black text-orange-900 dark:text-orange-100">{expiringSoonItems.length} Items</p>
+                        </div>
+                        <div className="w-10 h-10 bg-orange-100 dark:bg-orange-900/30 rounded-full flex items-center justify-center text-orange-600">
+                            <AlertTriangle className="w-5 h-5" />
+                        </div>
+                    </div>
+
+                    <div 
+                        className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-900/50 rounded-xl border border-gray-100 dark:border-gray-800 cursor-pointer hover:bg-gray-100 transition-all opacity-80"
+                        onClick={() => setViewDetails({ title: 'Slow Moving Items', items: slowMovingItems })}
+                    >
+                        <div>
+                            <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Slow Moving</p>
+                            <p className="text-lg font-black text-gray-700 dark:text-gray-300 truncate max-w-[120px]">{storeProfile.currency} {slowMovingValue.toLocaleString()}</p>
+                        </div>
+                        <div className="w-10 h-10 bg-gray-100 dark:bg-gray-800 rounded-full flex items-center justify-center text-gray-400">
+                            <TrendingDown className="w-5 h-5" />
+                        </div>
+                    </div>
+                </div>
+             </div>
       </div>
 
       {/* 4. FINANCIAL TRENDS */}
@@ -1098,9 +1381,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
 
       {/* 7. PERFORMANCE & CATEGORIES */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-             {/* Best Sellers List */}
-             <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700 flex flex-col h-full">
-                 <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2 mb-6">
+             {/* Performers & Spenders */}
+             <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700 flex flex-col h-full lg:col-span-1">
+                 <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2 mb-6 uppercase text-sm tracking-widest">
                     <PieChartIcon className="w-5 h-5 text-indigo-500" /> Top Performers
                 </h3>
                 
@@ -1157,9 +1440,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
              </div>
 
              {/* Top Spenders Chart */}
-             <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700 flex flex-col h-full">
+             <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700 flex flex-col h-full lg:col-span-1">
                  <div className="flex justify-between items-center mb-6">
-                    <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                    <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2 uppercase text-sm tracking-widest">
                         <Target className="w-5 h-5 text-emerald-500" /> Top Spenders
                     </h3>
                     <div className="flex bg-gray-100 dark:bg-gray-700 rounded-lg p-1">
@@ -1220,9 +1503,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
              </div>
 
              {/* Category Sales Pie */}
-             <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700 flex flex-col h-full">
-                 <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2 mb-6">
-                    <PieChartIcon className="w-5 h-5 text-orange-500" /> Category Distribution
+             <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700 flex flex-col h-full lg:col-span-1">
+                 <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2 mb-6 uppercase text-sm tracking-widest">
+                    <PieChartIcon className="w-5 h-5 text-orange-500" /> Categories
                  </h3>
                  <div className="flex-1 w-full flex items-center justify-center min-h-[250px]">
                      {categoryData.length > 0 ? (
@@ -1286,7 +1569,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
                                )}
                             </div>
                             <div className="text-right">
-                               <p className={`text-sm font-bold ${item.stock <= 5 ? 'text-red-500' : 'text-gray-900 dark:text-white'}`}>
+                               <p className={`text-sm font-bold ${(item.reorderPoint !== undefined ? item.stock <= item.reorderPoint : item.stock <= 5) ? 'text-red-500' : 'text-gray-900 dark:text-white'}`}>
                                  {item.stock} {item.measurementUnit || 'pcs'}
                                </p>
                                <p className="text-xs text-gray-500 dark:text-gray-400">Price: {storeProfile.currency} {item.sellPrice}</p>

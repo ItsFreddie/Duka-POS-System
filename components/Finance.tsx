@@ -14,19 +14,21 @@ interface FinanceProps {
   shift: ShiftRecord | null;
   customers: Customer[];
   onAddCustomer: (customer: Customer) => void;
+  onUpdateCustomer: (customer: Customer) => void;
   onDeleteCustomer: (id: string) => void;
   onCustomerDeposit: (customerId: string, amount: number, method: 'Cash' | 'M-Pesa') => void;
   onOpenShift: (cash: number, mpesa: number) => void;
   onCloseShift: (cash: number, mpesa: number) => void;
   onUpdateShift: (cash: number, mpesa: number) => void;
   onPayDebt: (transactionId: string, amount: number, method: 'Cash' | 'M-Pesa') => void;
+  onSettleAllDebt: (customerId: string, method: 'Cash' | 'M-Pesa') => void;
   onRefund: (transaction: Transaction) => void;
   onRecordExpense: (amount: number, reason: string, source: 'Cash' | 'M-Pesa', category?: string) => void;
   onSetDueDate?: (transactionId: string, dueDate: string) => void;
   storeProfile: StoreProfile;
 }
 
-export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers, onAddCustomer, onDeleteCustomer, onCustomerDeposit, onOpenShift, onCloseShift, onUpdateShift, onPayDebt, onRefund, onRecordExpense, onSetDueDate, storeProfile }) => {
+export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers, onAddCustomer, onUpdateCustomer, onDeleteCustomer, onCustomerDeposit, onOpenShift, onCloseShift, onUpdateShift, onPayDebt, onSettleAllDebt, onRefund, onRecordExpense, onSetDueDate, storeProfile }) => {
   const [activeTab, setActiveTab] = useState<'shift' | 'receipts' | 'debts' | 'expenses' | 'shiftHistory' | 'loyalty'>('shift');
   const [openingCash, setOpeningCash] = useState('');
   const [openingMpesa, setOpeningMpesa] = useState('');
@@ -43,6 +45,8 @@ export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers
 
   // Customer Management State
   const [isAddCustomerOpen, setIsAddCustomerOpen] = useState(false);
+  const [isEditCustomerOpen, setIsEditCustomerOpen] = useState(false);
+  const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [newCustomerName, setNewCustomerName] = useState('');
   const [newCustomerPhone, setNewCustomerPhone] = useState('');
   const [expandedCustomerId, setExpandedCustomerId] = useState<string | null>(null);
@@ -54,6 +58,7 @@ export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers
 
   // Debt Payment State
   const [payDebtModal, setPayDebtModal] = useState<{ isOpen: boolean; transaction: Transaction | null }>({ isOpen: false, transaction: null });
+  const [settleAllDebtModal, setSettleAllDebtModal] = useState<{ isOpen: boolean; customerId: string | null; totalDebt: number }>({ isOpen: false, customerId: null, totalDebt: 0 });
   const [debtAmount, setDebtAmount] = useState<string>('');
 
   // Receipt Viewer State
@@ -227,6 +232,18 @@ export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers
       onPayDebt(payDebtModal.transaction.id, Number(debtAmount), method);
       setPayDebtModal({ isOpen: false, transaction: null });
       setDebtAmount('');
+    }
+  };
+
+  const handleSettleAllClick = (e: React.MouseEvent, customerId: string, totalDebt: number) => {
+    e.stopPropagation();
+    setSettleAllDebtModal({ isOpen: true, customerId, totalDebt });
+  };
+
+  const confirmSettleAllDebt = (method: 'Cash' | 'M-Pesa') => {
+    if (settleAllDebtModal.customerId) {
+      onSettleAllDebt(settleAllDebtModal.customerId, method);
+      setSettleAllDebtModal({ isOpen: false, customerId: null, totalDebt: 0 });
     }
   };
 
@@ -993,11 +1010,31 @@ export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers
                                     <td className="p-4 text-right text-sm text-gray-400">
                                         <div className="flex justify-end gap-2 items-center">
                                             <button 
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setEditingCustomer(c);
+                                                    setNewCustomerName(c.name);
+                                                    setNewCustomerPhone(c.phone || '');
+                                                    setIsEditCustomerOpen(true);
+                                                }}
+                                                className="px-3 py-1.5 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/40 rounded-lg text-xs font-bold transition-colors border border-blue-100 dark:border-blue-900/30"
+                                            >
+                                                Edit
+                                            </button>
+                                            <button 
                                                 onClick={(e) => handleDepositClick(e, c.id)}
                                                 className="px-3 py-1.5 bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400 hover:bg-green-100 dark:hover:bg-green-900/40 rounded-lg text-xs font-bold transition-colors border border-green-100 dark:border-green-900/30"
                                             >
                                                 Deposit
                                             </button>
+                                            {c.totalDebt > 0 && (
+                                                <button 
+                                                    onClick={(e) => handleSettleAllClick(e, c.id, c.totalDebt)}
+                                                    className="px-3 py-1.5 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 rounded-lg text-xs font-bold transition-colors border border-emerald-100 dark:border-emerald-900/30"
+                                                >
+                                                    Mark as Paid
+                                                </button>
+                                            )}
                                             <span className="text-xs mr-2 font-bold uppercase tracking-wider text-gray-300">
                                                 {expandedCustomerId === c.id ? 'Close' : 'View'}
                                             </span>
@@ -1289,6 +1326,57 @@ export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers
         </div>
       )}
 
+      {/* Settle All Debt Modal */}
+      {settleAllDebtModal.isOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-md">
+           <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden border border-gray-200 dark:border-gray-800 transform scale-100 animate-fade-in">
+             <div className="p-6 border-b border-gray-100 dark:border-gray-800 flex justify-between items-center bg-gray-50 dark:bg-black/50">
+              <h3 className="text-xl font-black text-gray-900 dark:text-white tracking-tight">Settle All Debt</h3>
+              <button onClick={() => setSettleAllDebtModal({isOpen: false, customerId: null, totalDebt: 0})} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors">
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+            <div className="p-6">
+               <div className="mb-8 text-center">
+                 <p className="text-gray-500 text-xs font-bold uppercase tracking-widest mb-2">Total Amount Due</p>
+                 <p className="text-4xl font-black text-gray-900 dark:text-white">
+                    {storeProfile.currency} {settleAllDebtModal.totalDebt.toLocaleString()}
+                 </p>
+               </div>
+
+               <p className="text-center text-sm font-bold text-gray-600 dark:text-gray-300 mb-4">Select Payment Method</p>
+               <div className="space-y-3">
+                 <button 
+                   onClick={() => confirmSettleAllDebt('Cash')}
+                   className="w-full py-4 px-6 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-2xl flex items-center justify-between group transition-all border border-transparent hover:border-gray-300 dark:hover:border-gray-600"
+                 >
+                   <div className="flex items-center gap-3">
+                     <div className="bg-white dark:bg-gray-900 p-2 rounded-xl shadow-sm">
+                       <Banknote className="w-6 h-6 text-gray-700 dark:text-gray-300" />
+                     </div>
+                     <span className="font-bold text-gray-900 dark:text-white">Cash</span>
+                   </div>
+                   <div className="w-5 h-5 rounded-full border-2 border-gray-300 dark:border-gray-600 group-hover:border-gray-500"></div>
+                 </button>
+
+                 <button 
+                   onClick={() => confirmSettleAllDebt('M-Pesa')}
+                   className="w-full py-4 px-6 bg-green-50 dark:bg-green-900/10 hover:bg-green-100 dark:hover:bg-green-900/30 rounded-2xl flex items-center justify-between group transition-all border border-transparent hover:border-green-300 dark:hover:border-green-800"
+                 >
+                   <div className="flex items-center gap-3">
+                     <div className="bg-white dark:bg-gray-900 p-2 rounded-xl shadow-sm">
+                       <CreditCard className="w-6 h-6 text-green-600" />
+                     </div>
+                     <span className="font-bold text-green-700 dark:text-green-400">M-Pesa</span>
+                   </div>
+                   <div className="w-5 h-5 rounded-full border-2 border-green-200 dark:border-green-800 group-hover:border-green-400"></div>
+                 </button>
+               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Pay Debt Modal */}
       {payDebtModal.isOpen && payDebtModal.transaction && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-md">
@@ -1348,6 +1436,66 @@ export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers
                </div>
             </div>
            </div>
+        </div>
+      )}
+
+      {/* Edit Customer Modal */}
+      {isEditCustomerOpen && editingCustomer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md">
+           <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-fade-in border border-gray-200 dark:border-gray-800 transform scale-100">
+             <div className="p-6 border-b border-gray-100 dark:border-gray-800 flex justify-between items-center bg-gray-50 dark:bg-black/50">
+              <h3 className="text-xl font-black text-gray-900 dark:text-white tracking-tight">Edit Customer</h3>
+              <button onClick={() => { setIsEditCustomerOpen(false); setEditingCustomer(null); }} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors">
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+            <form onSubmit={(e) => {
+                e.preventDefault();
+                if (newCustomerName.trim()) {
+                    onUpdateCustomer({
+                        ...editingCustomer,
+                        name: newCustomerName.trim(),
+                        phone: newCustomerPhone.trim()
+                    });
+                    setIsEditCustomerOpen(false);
+                    setEditingCustomer(null);
+                    setNewCustomerName('');
+                    setNewCustomerPhone('');
+                }
+            }} className="p-6 space-y-5">
+              <div>
+                <label htmlFor="edit-customer-name" className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5 uppercase tracking-wider">Name</label>
+                <input 
+                  id="edit-customer-name"
+                  name="name"
+                  required
+                  type="text"
+                  value={newCustomerName}
+                  onChange={e => setNewCustomerName(e.target.value)}
+                  placeholder="e.g. Mama John"
+                  className="w-full p-3 border border-gray-200 dark:border-gray-700 rounded-xl bg-white dark:bg-black dark:text-white focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
+                />
+              </div>
+              <div>
+                <label htmlFor="edit-customer-phone" className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5 uppercase tracking-wider">Phone (Optional)</label>
+                <input 
+                  id="edit-customer-phone"
+                  name="phone"
+                  type="tel"
+                  value={newCustomerPhone}
+                  onChange={e => setNewCustomerPhone(e.target.value)}
+                  placeholder="e.g. 0712345678"
+                  className="w-full p-3 border border-gray-200 dark:border-gray-700 rounded-xl bg-white dark:bg-black dark:text-white focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
+                />
+              </div>
+              <button 
+                type="submit" 
+                className="w-full py-3.5 bg-blue-600 text-white rounded-xl font-bold shadow-lg shadow-blue-900/20 hover:bg-blue-700 active:scale-95 transition-all"
+              >
+                Save Changes
+              </button>
+            </form>
+          </div>
         </div>
       )}
 
@@ -1423,6 +1571,18 @@ export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers
 
                     {/* Totals */}
                     <div className="border-t-2 border-dashed border-gray-300 pt-2 mb-4 font-mono">
+                        {selectedReceipt.subtotal !== undefined && selectedReceipt.discount !== undefined && selectedReceipt.discount > 0 && (
+                            <>
+                                <div className="flex justify-between text-xs text-gray-600 mb-1">
+                                    <span>Subtotal</span>
+                                    <span>{storeProfile.currency} {selectedReceipt.subtotal.toLocaleString()}</span>
+                                </div>
+                                <div className="flex justify-between text-xs text-gray-600 mb-1">
+                                    <span>Discount</span>
+                                    <span>-{storeProfile.currency} {selectedReceipt.discount.toLocaleString()}</span>
+                                </div>
+                            </>
+                        )}
                         <div className="flex justify-between text-sm font-bold mb-1">
                             <span>TOTAL</span>
                             <span>{storeProfile.currency} {selectedReceipt.total.toLocaleString()}</span>
@@ -1431,6 +1591,18 @@ export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers
                              <span>Payment:</span>
                              <span className="uppercase">{selectedReceipt.paymentMethod}</span>
                         </div>
+                        {selectedReceipt.cashTendered !== undefined && (
+                            <div className="flex justify-between text-xs text-gray-600">
+                                <span>Cash Tendered:</span>
+                                <span>{storeProfile.currency} {selectedReceipt.cashTendered.toLocaleString()}</span>
+                            </div>
+                        )}
+                        {selectedReceipt.changeGiven !== undefined && selectedReceipt.changeGiven > 0 && (
+                            <div className="flex justify-between text-xs text-gray-600">
+                                <span>Change:</span>
+                                <span>{storeProfile.currency} {selectedReceipt.changeGiven.toLocaleString()}</span>
+                            </div>
+                        )}
                         {selectedReceipt.mpesaCode && (
                             <div className="flex justify-between text-xs text-gray-600">
                                 <span>Ref:</span>
@@ -1483,6 +1655,20 @@ export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers
               </button>
             </div>
             <form onSubmit={handleDepositSubmit} className="p-6 space-y-4">
+               {(() => {
+                 const destCustomer = customers.find(c => c.id === depositModal.customerId);
+                 if (destCustomer && destCustomer.totalDebt > 0) {
+                   return (
+                     <div className="bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800/30 p-3 rounded-lg flex items-start gap-2 mb-2">
+                       <AlertTriangle className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
+                       <p className="text-xs text-amber-800 dark:text-amber-400 leading-tight font-medium">
+                         Customer currently owes <span className="font-bold">{storeProfile.currency} {destCustomer.totalDebt.toLocaleString()}</span>. Deposited funds will automatically pay off existing debt before adding to their credit balance.
+                       </p>
+                     </div>
+                   );
+                 }
+                 return null;
+               })()}
                <div>
                   <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Amount ({storeProfile.currency})</label>
                   <input 

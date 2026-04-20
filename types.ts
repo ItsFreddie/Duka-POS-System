@@ -10,6 +10,7 @@ export interface Product {
   measurementUnit?: string; // 'pcs', 'L', 'kg', 'm' etc.
   expiryDate?: string; // ISO Date string YYYY-MM-DD
   order?: number; // For custom sorting
+  reorderPoint?: number; // When stock falls below this, highlight it
 }
 
 export interface CartItem extends Product {
@@ -85,6 +86,8 @@ export interface Transaction {
   status: 'Completed' | 'Pending Debt' | 'Refunded';
   isRefunded?: boolean;
   dueDate?: string;
+  cashTendered?: number;
+  changeGiven?: number;
 }
 
 export interface ShiftRecord {
@@ -114,6 +117,14 @@ export interface SpecialDay {
   theme: 'anniversary' | 'birthday' | 'holiday';
 }
 
+export interface Shortcuts {
+  pos: string;
+  inventory: string;
+  dashboard: string;
+  finance: string;
+  settings: string;
+}
+
 export interface StoreProfile {
   name: string;
   location: string;
@@ -122,6 +133,21 @@ export interface StoreProfile {
   dailySalesTarget?: number;
   adminPin: string; // New field for security
   specialDays?: SpecialDay[];
+  shortcuts?: Shortcuts;
+  customSaleSound?: string; // Base64 audio string
+  personalSavingsGoal?: number;
+  currentPersonalSavings?: number;
+}
+
+export interface MissedSale {
+  id: string;
+  timestamp: string;
+  itemName: string;
+  quantityRequested: number;
+  estimatedPrice: number; // This remains for backward compat or aggregated view
+  projectedBuyPrice: number;
+  projectedSellPrice: number;
+  lostProfit: number;
 }
 
 export enum AppView {
