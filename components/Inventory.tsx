@@ -493,7 +493,7 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
 
   return (
     <div className="space-y-6 h-full flex flex-col">
-      <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 bg-white dark:bg-gray-900 p-4 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-800">
+      <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 bg-white dark:bg-gray-900 p-4 rounded-3xl shadow-[0_4px_20px_rgba(0,0,0,0.03)] hover:shadow-[0_8px_30px_rgba(0,0,0,0.06)] transition-all border border-gray-100 dark:border-gray-800">
         <div>
           <h2 className="text-2xl font-black text-gray-900 dark:text-white tracking-tight">Inventory</h2>
           <p className="text-gray-500 text-sm">Manage your products, stock levels, and pricing.</p>
@@ -507,7 +507,7 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
               placeholder="Search products..."
               value={search}
               onChange={e => setSearch(e.target.value)}
-              className="w-full pl-10 pr-4 py-2.5 bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-800 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500 dark:text-white transition-all shadow-sm"
+              className="w-full pl-10 pr-4 py-2.5 bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-800 rounded-2xl focus:outline-none focus:ring-2 focus:ring-primary-500 dark:text-white transition-all shadow-sm"
             />
           </div>
 
@@ -516,7 +516,7 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
               <select 
                 value={sortBy} 
                 onChange={(e) => setSortBy(e.target.value as any)}
-                className="appearance-none pl-9 pr-8 py-2.5 bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-800 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm font-medium dark:text-white cursor-pointer"
+                className="appearance-none pl-9 pr-8 py-2.5 bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-800 rounded-2xl focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm font-medium dark:text-white cursor-pointer"
               >
                 <option value="custom">Custom Order</option>
                 <option value="name">Name (A-Z)</option>
@@ -530,7 +530,7 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
             </div>
           </div>
 
-          <div className="flex bg-gray-100 dark:bg-gray-800 rounded-lg p-1 border border-gray-200 dark:border-gray-700">
+          <div className="flex bg-gray-100 dark:bg-gray-800 rounded-xl p-1 border border-gray-100 dark:border-gray-800">
             <button 
               onClick={() => setViewMode('grid')}
               className={`p-2 rounded-md transition-all ${viewMode === 'grid' ? 'bg-white dark:bg-gray-700 text-primary-600 dark:text-white shadow-sm' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400'}`}
@@ -547,7 +547,7 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
 
           <button
             onClick={() => setIsStockModalOpen(true)}
-            className="flex items-center gap-2 bg-emerald-600 text-white px-3 py-2.5 rounded-xl hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-900/20 font-semibold"
+            className="flex items-center gap-2 bg-emerald-600 text-white px-3 py-2.5 rounded-2xl hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-900/20 font-semibold"
             title="Quick Add Stock"
           >
             <Layers className="w-4 h-4" />
@@ -556,7 +556,7 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
           {/* Master Report Button */}
           <button
             onClick={handleGenerateMasterReport}
-            className="flex items-center gap-2 bg-purple-600 text-white px-3 py-2.5 rounded-xl hover:bg-purple-700 transition-all shadow-lg shadow-purple-900/20 font-semibold"
+            className="flex items-center gap-2 bg-purple-600 text-white px-3 py-2.5 rounded-2xl hover:bg-purple-700 transition-all shadow-lg shadow-purple-900/20 font-semibold"
             title="Master Stock Report"
           >
             <ClipboardList className="w-4 h-4" />
@@ -566,14 +566,14 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
           <div className="relative" ref={exportMenuRef}>
             <button
               onClick={() => setIsExportMenuOpen(!isExportMenuOpen)}
-              className="flex items-center gap-2 bg-gray-800 dark:bg-gray-700 text-white px-3 py-2.5 rounded-xl hover:bg-gray-900 dark:hover:bg-gray-600 transition-all shadow-lg shadow-gray-900/20 font-semibold"
+              className="flex items-center gap-2 bg-gray-800 dark:bg-gray-700 text-white px-3 py-2.5 rounded-2xl hover:bg-gray-900 dark:hover:bg-gray-600 transition-all shadow-lg shadow-gray-900/20 font-semibold"
               title="Export CSV Options"
             >
               <Download className="w-4 h-4" />
               <ChevronDown className="w-4 h-4 hidden sm:block opacity-70" />
             </button>
             {isExportMenuOpen && (
-              <div className="absolute right-0 top-full mt-2 w-48 bg-white dark:bg-gray-800 rounded-xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-gray-100 dark:border-gray-700 py-2 z-50 animate-fade-in origin-top-right">
+              <div className="absolute right-0 top-full mt-2 w-48 bg-white dark:bg-gray-800 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-gray-100 dark:border-gray-700 py-2 z-50 animate-fade-in origin-top-right">
                 <button 
                   onClick={() => exportToCSV('all')}
                   className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 font-bold transition-colors"
@@ -599,7 +599,7 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
           
           {/* Import Button */}
           <label 
-             className="flex items-center gap-2 bg-blue-600 text-white px-3 py-2.5 rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-900/20 font-semibold cursor-pointer"
+             className="flex items-center gap-2 bg-blue-600 text-white px-3 py-2.5 rounded-2xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-900/20 font-semibold cursor-pointer"
              title="Import from CSV"
           >
             <FileSpreadsheet className="w-4 h-4" />
@@ -614,7 +614,7 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
 
           <button
             onClick={() => setIsModalOpen(true)}
-            className="flex items-center gap-2 bg-primary-600 text-white px-4 py-2.5 rounded-xl hover:bg-primary-700 transition-all shadow-lg shadow-primary-900/20 font-semibold"
+            className="flex items-center gap-2 bg-primary-600 text-white px-4 py-2.5 rounded-2xl hover:bg-primary-700 transition-all shadow-lg shadow-primary-900/20 font-semibold"
           >
             <Plus className="w-5 h-5" /> <span className="hidden sm:inline">Add Product</span>
           </button>
@@ -626,7 +626,7 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
           {(provided) => (
             <div ref={provided.innerRef} {...provided.droppableProps} className="flex-1 overflow-y-auto space-y-8 pb-10">
               {processedProducts.length === 0 && (
-                <div className="p-12 text-center text-gray-500 dark:text-gray-400 bg-white dark:bg-gray-900 rounded-2xl border border-dashed border-gray-300 dark:border-gray-700 mt-4">
+                <div className="p-12 text-center text-gray-500 dark:text-gray-400 bg-white dark:bg-gray-900 rounded-3xl border border-dashed border-gray-300 dark:border-gray-700 mt-4">
                   <Package className="w-12 h-12 mx-auto mb-4 opacity-50" />
                   <h3 className="text-lg font-bold mb-1">No products found</h3>
                   <p>Try adjusting your search, add a new product, or import a CSV file.</p>
@@ -678,22 +678,22 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
                                               <div 
                                               ref={provided.innerRef}
                                               {...provided.draggableProps}
-                                              className={`group bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 shadow-[0_4px_12px_rgba(0,0,0,0.08)] hover:shadow-xl hover:-translate-y-1 transition-all duration-300 overflow-hidden flex flex-col`}
+                                              className={`group bg-white dark:bg-gray-900 rounded-3xl border border-gray-100 dark:border-gray-800 shadow-[0_4px_20px_rgba(0,0,0,0.03)] hover:shadow-[0_8px_30px_rgba(0,0,0,0.06)] hover:-translate-y-1 transition-all duration-300 overflow-hidden flex flex-col`}
                                               >
                                               <div className="relative aspect-[4/3] overflow-hidden bg-gray-50 dark:bg-gray-800">
-                                                  <div {...provided.dragHandleProps} className={`absolute top-3 left-3 z-10 p-1.5 rounded-lg bg-white/80 dark:bg-black/50 backdrop-blur-md text-gray-600 dark:text-gray-300 shadow-sm ${sortBy !== 'custom' ? 'opacity-0' : 'opacity-0 group-hover:opacity-100 cursor-grab active:cursor-grabbing'} transition-opacity`}>
+                                                  <div {...provided.dragHandleProps} className={`absolute top-3 left-3 z-10 p-1.5 rounded-xl bg-white/80 dark:bg-black/50 backdrop-blur-md text-gray-600 dark:text-gray-300 shadow-sm ${sortBy !== 'custom' ? 'opacity-0' : 'opacity-0 group-hover:opacity-100 cursor-grab active:cursor-grabbing'} transition-opacity`}>
                                                     <GripVertical className="w-4 h-4" />
                                                   </div>
                                                   <img src={p.image} alt={p.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
                                                   
                                                   <div className="absolute top-3 right-3 flex flex-col gap-2 items-end">
-                                                      <span className={`px-2.5 py-1 rounded-lg text-xs font-bold backdrop-blur-md shadow-sm ${isLowStock ? 'bg-red-500/90 text-white' : 'bg-white/90 text-gray-800 dark:bg-black/70 dark:text-white'}`}>
+                                                      <span className={`px-2.5 py-1 rounded-xl text-xs font-bold backdrop-blur-md shadow-sm ${isLowStock ? 'bg-red-500/90 text-white' : 'bg-white/90 text-gray-800 dark:bg-black/70 dark:text-white'}`}>
                                                           {p.stock} {p.measurementUnit || 'pcs'}
                                                       </span>
                                                   </div>
                                                   
                                                   {expiryStatus && (
-                                                      <div className={`absolute top-3 left-12 px-2 py-1 rounded-lg text-xs font-bold backdrop-blur-md shadow-sm flex items-center gap-1 ${expiryStatus.color} text-white`}>
+                                                      <div className={`absolute top-3 left-12 px-2 py-1 rounded-xl text-xs font-bold backdrop-blur-md shadow-sm flex items-center gap-1 ${expiryStatus.color} text-white`}>
                                                           {expiryStatus.urgent && <AlertTriangle className="w-3 h-3" />}
                                                           {expiryStatus.text}
                                                       </div>
@@ -725,13 +725,13 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
                                                   </div>
 
                                                   <div className="flex gap-2 mt-4 pt-2">
-                                                  <button onClick={() => openQuickStock(p.id)} className="px-3 py-2 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors" title="Add Stock">
+                                                  <button onClick={() => openQuickStock(p.id)} className="px-3 py-2 rounded-xl bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors" title="Add Stock">
                                                       <Layers className="w-4 h-4" />
                                                   </button>
-                                                  <button onClick={() => handleEdit(p)} className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg bg-gray-50 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors font-medium text-sm">
+                                                  <button onClick={() => handleEdit(p)} className="flex-1 flex items-center justify-center gap-2 py-2 rounded-xl bg-gray-50 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors font-medium text-sm">
                                                       <Edit2 className="w-4 h-4" /> Edit
                                                   </button>
-                                                  <button onClick={() => onDeleteProduct(p.id)} className="flex items-center justify-center px-3 rounded-lg bg-red-50 dark:bg-red-900/20 text-red-600 hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors">
+                                                  <button onClick={() => onDeleteProduct(p.id)} className="flex items-center justify-center px-3 rounded-xl bg-red-50 dark:bg-red-900/20 text-red-600 hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors">
                                                       <Trash2 className="w-4 h-4" />
                                                   </button>
                                                   </div>
@@ -744,7 +744,7 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
                                         {provided.placeholder}
                                     </div>
                                     ) : (
-                                    <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-800 overflow-hidden animate-fade-in">
+                                    <div className="bg-white dark:bg-gray-900 rounded-3xl shadow-[0_4px_20px_rgba(0,0,0,0.03)] hover:shadow-[0_8px_30px_rgba(0,0,0,0.06)] transition-all border border-gray-100 dark:border-gray-800 overflow-hidden animate-fade-in">
                                         <div className="overflow-x-auto">
                                         <table className="w-full text-left border-collapse">
                                             <thead className="bg-gray-50 dark:bg-black text-gray-500 dark:text-gray-400 text-sm">
@@ -776,7 +776,7 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
                                                               </div>
                                                           </td>
                                                           <td className="p-4 flex items-center gap-4">
-                                                          <img src={p.image} alt="" className="w-12 h-12 rounded-lg object-cover bg-gray-100 dark:bg-gray-800 shadow-sm" />
+                                                          <img src={p.image} alt="" className="w-12 h-12 rounded-xl object-cover bg-gray-100 dark:bg-gray-800 shadow-sm" />
                                                           <span className="font-bold text-gray-900 dark:text-white">{p.name}</span>
                                                           </td>
                                                           <td className="p-4 text-gray-600 dark:text-gray-400 font-medium">{p.category}</td>
@@ -798,13 +798,13 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
                                                           <td className="p-4 font-bold text-gray-900 dark:text-white">{storeProfile.currency} {p.sellPrice} <span className="text-xs font-normal text-gray-500">/{p.measurementUnit || 'pc'}</span></td>
                                                           <td className="p-4 text-right">
                                                           <div className="flex justify-end gap-2">
-                                                              <button onClick={() => openQuickStock(p.id)} className="p-2 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 rounded-lg transition-colors" title="Add Stock">
+                                                              <button onClick={() => openQuickStock(p.id)} className="p-2 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 rounded-xl transition-colors" title="Add Stock">
                                                                   <Layers className="w-4 h-4" />
                                                               </button>
-                                                              <button onClick={() => handleEdit(p)} className="p-2 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg transition-colors">
+                                                              <button onClick={() => handleEdit(p)} className="p-2 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-xl transition-colors">
                                                               <Edit2 className="w-4 h-4" />
                                                               </button>
-                                                              <button onClick={() => onDeleteProduct(p.id)} className="p-2 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg transition-colors">
+                                                              <button onClick={() => onDeleteProduct(p.id)} className="p-2 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-xl transition-colors">
                                                               <Trash2 className="w-4 h-4" />
                                                               </button>
                                                           </div>
@@ -838,7 +838,7 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
       {/* Quick Add Stock Modal */}
       {isStockModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md">
-          <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] w-full max-w-sm overflow-hidden animate-fade-in border border-gray-100 dark:border-gray-700 transform scale-100">
+          <div className="bg-white dark:bg-gray-900 rounded-3xl shadow-[0_4px_20px_rgba(0,0,0,0.03)] hover:shadow-[0_8px_30px_rgba(0,0,0,0.06)] transition-all w-full max-w-sm overflow-hidden animate-fade-in border border-gray-100 dark:border-gray-700 transform scale-100">
              <div className="p-6 border-b border-gray-100 dark:border-gray-800 flex justify-between items-center bg-gray-50 dark:bg-black/50">
               <h3 className="text-xl font-black text-gray-900 dark:text-white tracking-tight">Quick Restock</h3>
               <button onClick={() => setIsStockModalOpen(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors">
@@ -854,7 +854,7 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
                   required
                   value={selectedStockProduct}
                   onChange={e => setSelectedStockProduct(e.target.value)}
-                  className="w-full p-3 border border-gray-200 dark:border-gray-700 rounded-xl bg-white dark:bg-gray-950 dark:text-white focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                  className="w-full p-3 border border-gray-100 dark:border-gray-800 rounded-2xl bg-white dark:bg-gray-950 dark:text-white focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
                 >
                   <option value="">-- Choose Product --</option>
                   {products.map(p => (
@@ -873,7 +873,7 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
                       required
                       value={stockToAdd}
                       onChange={e => setStockToAdd(e.target.value)}
-                      className="w-full p-3 border border-gray-200 dark:border-gray-700 rounded-xl bg-white dark:bg-gray-950 dark:text-white focus:ring-2 focus:ring-emerald-500 outline-none transition-all font-bold"
+                      className="w-full p-3 border border-gray-100 dark:border-gray-800 rounded-2xl bg-white dark:bg-gray-950 dark:text-white focus:ring-2 focus:ring-emerald-500 outline-none transition-all font-bold"
                     />
                     <p className="text-[10px] text-gray-400 mt-1">Use negative values to reduce stock</p>
                   </div>
@@ -885,7 +885,7 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
                       type="date"
                       value={stockExpiry}
                       onChange={e => setStockExpiry(e.target.value)}
-                      className="w-full p-3 border border-gray-200 dark:border-gray-700 rounded-xl bg-white dark:bg-gray-950 dark:text-white focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                      className="w-full p-3 border border-gray-100 dark:border-gray-800 rounded-2xl bg-white dark:bg-gray-950 dark:text-white focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
                     />
                     <p className="text-[10px] text-gray-400 mt-1">This will update the product's expiry date</p>
                   </div>
@@ -899,11 +899,11 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
                       placeholder="e.g. Purchase, Return, Correction"
                       value={stockReason}
                       onChange={e => setStockReason(e.target.value)}
-                      className="w-full p-3 border border-gray-200 dark:border-gray-700 rounded-xl bg-white dark:bg-gray-950 dark:text-white focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                      className="w-full p-3 border border-gray-100 dark:border-gray-800 rounded-2xl bg-white dark:bg-gray-950 dark:text-white focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
                     />
                   </div>
               </div>
-              <button type="submit" className="w-full bg-emerald-600 text-white py-3.5 rounded-xl hover:bg-emerald-700 font-bold shadow-lg shadow-emerald-900/20 transform active:scale-95 transition-all">
+              <button type="submit" className="w-full bg-emerald-600 text-white py-3.5 rounded-2xl hover:bg-emerald-700 font-bold shadow-lg shadow-emerald-900/20 transform active:scale-95 transition-all">
                 Update Stock
               </button>
             </form>
@@ -914,7 +914,7 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
       {/* Add/Edit Product Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md">
-          <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] w-full max-w-lg overflow-hidden animate-fade-in border border-gray-100 dark:border-gray-700">
+          <div className="bg-white dark:bg-gray-900 rounded-3xl shadow-[0_4px_20px_rgba(0,0,0,0.03)] hover:shadow-[0_8px_30px_rgba(0,0,0,0.06)] transition-all w-full max-w-lg overflow-hidden animate-fade-in border border-gray-100 dark:border-gray-700">
             <div className="p-6 border-b border-gray-100 dark:border-gray-800 flex justify-between items-center bg-gray-50 dark:bg-black/50">
               <h3 className="text-xl font-black text-gray-900 dark:text-white tracking-tight">{editingId ? 'Edit Product' : 'Add New Product'}</h3>
               <button onClick={closeModal} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors">
@@ -931,7 +931,7 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
                   type="text"
                   value={form.name}
                   onChange={e => setForm({...form, name: e.target.value})}
-                  className="w-full p-3 border border-gray-200 dark:border-gray-700 rounded-xl bg-transparent dark:text-white focus:ring-2 focus:ring-primary-500 outline-none transition-all"
+                  className="w-full p-3 border border-gray-100 dark:border-gray-800 rounded-2xl bg-transparent dark:text-white focus:ring-2 focus:ring-primary-500 outline-none transition-all"
                 />
               </div>
               <div className="grid grid-cols-2 gap-4">
@@ -945,7 +945,7 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
                     list="categories"
                     value={form.category}
                     onChange={e => setForm({...form, category: e.target.value})}
-                    className="w-full p-3 border border-gray-200 dark:border-gray-700 rounded-xl bg-transparent dark:text-white focus:ring-2 focus:ring-primary-500 outline-none transition-all"
+                    className="w-full p-3 border border-gray-100 dark:border-gray-800 rounded-2xl bg-transparent dark:text-white focus:ring-2 focus:ring-primary-500 outline-none transition-all"
                   />
                   <datalist id="categories">
                     <option value="Drinks" />
@@ -964,7 +964,7 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
                     step="any"
                     value={form.stock}
                     onChange={e => setForm({...form, stock: e.target.value})}
-                    className="w-full p-3 border border-gray-200 dark:border-gray-700 rounded-xl bg-transparent dark:text-white focus:ring-2 focus:ring-primary-500 outline-none transition-all"
+                    className="w-full p-3 border border-gray-100 dark:border-gray-800 rounded-2xl bg-transparent dark:text-white focus:ring-2 focus:ring-primary-500 outline-none transition-all"
                   />
                 </div>
               </div>
@@ -976,7 +976,7 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
                     name="measurementUnit"
                     value={form.measurementUnit}
                     onChange={e => setForm({...form, measurementUnit: e.target.value})}
-                    className="w-full p-3 border border-gray-200 dark:border-gray-700 rounded-xl bg-transparent dark:text-white focus:ring-2 focus:ring-primary-500 outline-none transition-all"
+                    className="w-full p-3 border border-gray-100 dark:border-gray-800 rounded-2xl bg-transparent dark:text-white focus:ring-2 focus:ring-primary-500 outline-none transition-all"
                   >
                     <option value="pcs">Pieces (pcs)</option>
                     <option value="L">Liters (L)</option>
@@ -993,7 +993,7 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
                     type="date"
                     value={form.expiryDate}
                     onChange={e => setForm({...form, expiryDate: e.target.value})}
-                    className="w-full p-3 border border-gray-200 dark:border-gray-700 rounded-xl bg-transparent dark:text-white focus:ring-2 focus:ring-primary-500 outline-none transition-all"
+                    className="w-full p-3 border border-gray-100 dark:border-gray-800 rounded-2xl bg-transparent dark:text-white focus:ring-2 focus:ring-primary-500 outline-none transition-all"
                   />
                 </div>
                </div>
@@ -1007,7 +1007,7 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
                     placeholder="Alert when stock falls below..."
                     value={form.reorderPoint}
                     onChange={e => setForm({...form, reorderPoint: e.target.value})}
-                    className="w-full p-3 border border-gray-200 dark:border-gray-700 rounded-xl bg-transparent dark:text-white focus:ring-2 focus:ring-primary-500 outline-none transition-all"
+                    className="w-full p-3 border border-gray-100 dark:border-gray-800 rounded-2xl bg-transparent dark:text-white focus:ring-2 focus:ring-primary-500 outline-none transition-all"
                   />
                </div>
               <div className="grid grid-cols-2 gap-4">
@@ -1021,7 +1021,7 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
                     step="any"
                     value={form.buyPrice}
                     onChange={e => setForm({...form, buyPrice: e.target.value})}
-                    className="w-full p-3 border border-gray-200 dark:border-gray-700 rounded-xl bg-transparent dark:text-white focus:ring-2 focus:ring-primary-500 outline-none transition-all"
+                    className="w-full p-3 border border-gray-100 dark:border-gray-800 rounded-2xl bg-transparent dark:text-white focus:ring-2 focus:ring-primary-500 outline-none transition-all"
                   />
                 </div>
                 <div>
@@ -1034,26 +1034,26 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
                     step="any"
                     value={form.sellPrice}
                     onChange={e => setForm({...form, sellPrice: e.target.value})}
-                    className="w-full p-3 border border-gray-200 dark:border-gray-700 rounded-xl bg-transparent dark:text-white focus:ring-2 focus:ring-primary-500 outline-none transition-all"
+                    className="w-full p-3 border border-gray-100 dark:border-gray-800 rounded-2xl bg-transparent dark:text-white focus:ring-2 focus:ring-primary-500 outline-none transition-all"
                   />
                 </div>
               </div>
               <div>
                 <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5 uppercase tracking-wider">Product Image</label>
-                <div className="flex gap-4 items-center p-3 border border-dashed border-gray-300 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-black/30">
+                <div className="flex gap-4 items-center p-3 border border-dashed border-gray-300 dark:border-gray-700 rounded-2xl bg-gray-50 dark:bg-black/30">
                    {form.image ? (
                      <div className="relative group">
-                        <img src={form.image} alt="Preview" className="w-20 h-20 rounded-lg object-cover shadow-sm" />
-                        <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center text-white text-xs cursor-pointer" onClick={() => fileInputRef.current?.click()}>Change</div>
+                        <img src={form.image} alt="Preview" className="w-20 h-20 rounded-xl object-cover shadow-sm" />
+                        <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-xl flex items-center justify-center text-white text-xs cursor-pointer" onClick={() => fileInputRef.current?.click()}>Change</div>
                      </div>
                    ) : (
-                     <div className="w-20 h-20 rounded-lg bg-gray-200 dark:bg-gray-800 flex items-center justify-center">
+                     <div className="w-20 h-20 rounded-xl bg-gray-200 dark:bg-gray-800 flex items-center justify-center">
                         <Package className="w-8 h-8 text-gray-400" />
                      </div>
                    )}
                    <div className="flex-1">
                      <label className="cursor-pointer">
-                       <div className="inline-flex items-center px-4 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors shadow-sm">
+                       <div className="inline-flex items-center px-4 py-2 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-800 rounded-xl text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors shadow-sm">
                          <Upload className="w-4 h-4 mr-2" />
                          Upload Photo
                        </div>
@@ -1070,8 +1070,8 @@ export const Inventory: React.FC<InventoryProps> = ({ products, onAddProduct, on
                 </div>
               </div>
               <div className="pt-6 flex justify-end gap-3 border-t border-gray-100 dark:border-gray-800 mt-4">
-                <button type="button" onClick={closeModal} className="px-6 py-2.5 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl font-medium transition-colors">Cancel</button>
-                <button type="submit" className="px-6 py-2.5 bg-primary-600 text-white rounded-xl hover:bg-primary-700 flex items-center gap-2 shadow-lg shadow-primary-900/20 font-bold transform active:scale-95 transition-all">
+                <button type="button" onClick={closeModal} className="px-6 py-2.5 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-2xl font-medium transition-colors">Cancel</button>
+                <button type="submit" className="px-6 py-2.5 bg-primary-600 text-white rounded-2xl hover:bg-primary-700 flex items-center gap-2 shadow-lg shadow-primary-900/20 font-bold transform active:scale-95 transition-all">
                   <Save className="w-4 h-4" /> Save Product
                 </button>
               </div>

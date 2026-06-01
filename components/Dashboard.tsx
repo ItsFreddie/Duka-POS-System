@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, PieChart, Pie, Cell, Legend, ComposedChart, Line } from 'recharts';
-import { TrendingUp, DollarSign, AlertCircle, ShoppingBag, Sparkles, Loader2, Target, Edit3, PieChart as PieChartIcon, CreditCard, FileDown, Calendar, Wallet, Banknote, TrendingDown, ArrowRight, AlertTriangle, X, Check, AlertOctagon, Package, Activity, ChevronDown, Filter, Search } from 'lucide-react';
+import { TrendingUp, DollarSign, AlertCircle, ShoppingBag, Sparkles, Loader2, Target, Edit3, PieChart as PieChartIcon, CreditCard, FileDown, Calendar, Wallet, Banknote, TrendingDown, ArrowRight, AlertTriangle, X, Check, AlertOctagon, Package, Activity, ChevronDown, Filter, Search, Truck } from 'lucide-react';
 import { Product, Transaction, StoreProfile, AppView, ShiftRecord, StockLog, Customer, MissedSale } from '../types';
 import * as db from '../utils/db';
 import { getBusinessInsights, createBusinessChat } from '../services/geminiService';
@@ -39,6 +39,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
   const [spendingMetric, setSpendingMetric] = useState<'spent' | 'points'>('spent');
   const [itemsSoldDate, setItemsSoldDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [isItemsSoldModalOpen, setIsItemsSoldModalOpen] = useState(false);
+  const [showAllRestock, setShowAllRestock] = useState(false);
   const [shifts, setShifts] = useState<ShiftRecord[]>([]);
   const dashboardRef = useRef<HTMLDivElement>(null);
 
@@ -314,6 +315,83 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
   const totalStockValue = products.reduce((acc, p) => acc + (p.buyPrice * p.stock), 0);
   const lowStockItems = products.filter(p => (p.reorderPoint !== undefined ? p.stock <= p.reorderPoint : p.stock <= 5) && p.stock > 0);
   const outOfStockItems = products.filter(p => p.stock <= 0);
+
+  const restockSuggestions = useMemo(() => {
+    const thirtyAgo = new Date();
+    thirtyAgo.setDate(thirtyAgo.getDate() - 30);
+    const startStr = thirtyAgo.toISOString().split('T')[0];
+
+    // Filter transactions to last 30 days
+    const last30DaysTx = transactions.filter(t => t.date >= startStr && t.status !== 'Refunded');
+
+    // Count sold quantities for each product in last 30 days
+    const productSoldQty: Record<string, number> = {};
+    last30DaysTx.forEach(t => {
+      t.items.forEach(item => {
+        productSoldQty[item.productId] = (productSoldQty[item.productId] || 0) + item.quantity;
+      });
+    });
+
+    return products.map(p => {
+      const sold30 = productSoldQty[p.id] || 0;
+      const salesVelocity = sold30 / 30; // units per day
+
+      // Determine Lead Time based on Product Category (realistic supply chain defaults)
+      let leadTime = 2; // general default in days
+      const cat = (p.category || '').toLowerCase();
+      if (cat.includes('drink') || cat.includes('beverage') || cat.includes('milk') || cat.includes('bread') || cat.includes('fresh')) {
+        leadTime = 1; // 1-day rapid local delivery
+      } else if (cat.includes('snack') || cat.includes('food') || cat.includes('grocer')) {
+        leadTime = 2; // 2 days
+      } else if (cat.includes('beauty') || cat.includes('cosmetic') || cat.includes('care') || cat.includes('apparel') || cat.includes('cloth')) {
+        leadTime = 3; // 3 days
+      } else if (cat.includes('electro') || cat.includes('tech') || cat.includes('phone') || cat.includes('access')) {
+        leadTime = 5; // 5 days
+      }
+
+      // Calculate depleted days remaining
+      const daysRemaining = salesVelocity > 0 ? p.stock / salesVelocity : Infinity;
+
+      // Restock trigger threshold
+      const restockBarrier = salesVelocity * leadTime;
+
+      // Recommended Stock level: cover next 21 days + lead time buffer
+      const idealStockTarget = Math.max(10, Math.ceil(salesVelocity * 21));
+      const recommendedOrderQty = idealStockTarget - p.stock;
+      const restockOutlay = recommendedOrderQty > 0 ? recommendedOrderQty * p.buyPrice : 0;
+
+      // Classification Status:
+      let status: 'critical' | 'warning' | 'safe' = 'safe';
+      if (p.stock <= 0) {
+        status = 'critical';
+      } else if (salesVelocity > 0 && daysRemaining <= leadTime) {
+        status = 'critical';
+      } else if (salesVelocity > 0 && daysRemaining <= leadTime * 1.8) {
+        status = 'warning';
+      } else if (p.reorderPoint !== undefined && p.stock <= p.reorderPoint) {
+        status = 'warning';
+      }
+
+      return {
+        ...p,
+        salesVelocity: parseFloat(salesVelocity.toFixed(2)),
+        sold30,
+        leadTime,
+        daysRemaining: daysRemaining === Infinity ? -1 : parseFloat(daysRemaining.toFixed(1)),
+        restockBarrier: parseFloat(restockBarrier.toFixed(1)),
+        recommendedOrderQty: recommendedOrderQty > 0 ? recommendedOrderQty : 0,
+        restockOutlay,
+        status
+      };
+    }).filter(p => p.status === 'critical' || p.status === 'warning')
+      .sort((a, b) => {
+        const aOut = a.stock <= 0;
+        const bOut = b.stock <= 0;
+        if (aOut && !bOut) return -1;
+        if (!aOut && bOut) return 1;
+        return b.salesVelocity - a.salesVelocity;
+      });
+  }, [products, transactions]);
 
   // Expiring Soon (Next 2 Days)
   const expiringSoonItems = products.filter(p => {
@@ -597,6 +675,229 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
     });
   }, [shifts]);
 
+  const bestSellersByDayOfWeek = useMemo(() => {
+    const dayIndices = [1, 2, 3, 4, 5, 6, 0]; // Mon, Tue, Wed, Thu, Fri, Sat, Sun
+    const dayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    
+    const stats: Record<number, Record<string, { quantity: number; revenue: number; name: string }>> = {
+      0: {}, 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {}
+    };
+
+    transactions.forEach(t => {
+      if (t.status === 'Refunded') return;
+      const dateObj = new Date(t.date);
+      const wDay = dateObj.getDay();
+      
+      t.items.forEach(item => {
+        if (!stats[wDay][item.productId]) {
+          stats[wDay][item.productId] = { quantity: 0, revenue: 0, name: item.name };
+        }
+        stats[wDay][item.productId].quantity += item.quantity;
+        stats[wDay][item.productId].revenue += item.price * item.quantity;
+      });
+    });
+
+    return dayIndices.map((idx, index) => {
+      const dayData = stats[idx];
+      const items = Object.values(dayData);
+      items.sort((a, b) => b.quantity - a.quantity);
+      
+      const topProducts = items.slice(0, 5).map(item => ({
+        name: item.name,
+        quantity: item.quantity,
+        revenue: item.revenue
+      }));
+
+      return {
+        dayIndex: idx,
+        dayName: dayNames[index],
+        topProducts
+      };
+    });
+  }, [transactions]);
+
+  const revenuePrediction = useMemo(() => {
+    // Filter active and non-refunded transactions
+    const nonRefunded = transactions.filter(t => t.status !== 'Refunded');
+    if (nonRefunded.length === 0) {
+      return {
+        predictedTotal: 0,
+        chartData: [],
+        confidence: 'Low' as const,
+        baseline: 0,
+        trendDirection: 'Stable' as const,
+        hasData: false,
+        slope: 0
+      };
+    }
+
+    // Map to YYYY-MM-DD to accumulate actual daily sales
+    const dailyVolume: Record<string, number> = {};
+    nonRefunded.forEach(t => {
+      const dateKey = t.date.split('T')[0];
+      dailyVolume[dateKey] = (dailyVolume[dateKey] || 0) + t.total;
+    });
+
+    // Find first date of transaction up to today to generate dense list of days
+    const dates = Object.keys(dailyVolume).sort();
+    if (dates.length === 0) {
+      return {
+        predictedTotal: 0,
+        chartData: [],
+        confidence: 'Low' as const,
+        baseline: 0,
+        trendDirection: 'Stable' as const,
+        hasData: false,
+        slope: 0
+      };
+    }
+
+    const firstDate = new Date(dates[0]);
+    const todayDate = new Date();
+    const msInDay = 24 * 60 * 60 * 1000;
+    const daySpan = Math.max(1, Math.ceil((todayDate.getTime() - firstDate.getTime()) / msInDay));
+
+    // Construct dense list of values (including zero-sales days)
+    const denseDaily: { dateStr: string; val: number; dayOfWeek: number; tIndex: number }[] = [];
+    for (let i = 0; i <= daySpan; i++) {
+      const current = new Date(firstDate.getTime() + i * msInDay);
+      const dateKey = current.toISOString().split('T')[0];
+      denseDaily.push({
+        dateStr: dateKey,
+        val: dailyVolume[dateKey] || 0,
+        dayOfWeek: current.getDay(),
+        tIndex: i
+      });
+    }
+
+    // Average daily sales (Baseline)
+    const totalVolume = denseDaily.reduce((sum, d) => sum + d.val, 0);
+    const baseline = totalVolume / denseDaily.length;
+
+    // Weekday multipliers (0-6)
+    const weekdaySum: Record<number, number> = { 0:0, 1:0, 2:0, 3:0, 4:0, 5:0, 6:0 };
+    const weekdayCount: Record<number, number> = { 0:0, 1:0, 2:0, 3:0, 4:0, 5:0, 6:0 };
+    denseDaily.forEach(d => {
+      weekdaySum[d.dayOfWeek] += d.val;
+      weekdayCount[d.dayOfWeek] += 1;
+    });
+
+    const weekdayFactors: Record<number, number> = {};
+    for (let i = 0; i < 7; i++) {
+      if (weekdayCount[i] > 0) {
+        const avg = weekdaySum[i] / weekdayCount[i];
+        // Seasonality index = weekday average / global average
+        const multiplier = baseline > 0 ? avg / baseline : 1;
+        // Clamp multiplier to prevent extreme isolated swings
+        weekdayFactors[i] = Math.min(2.5, Math.max(0.3, multiplier));
+      } else {
+        weekdayFactors[i] = 1;
+      }
+    }
+
+    // Calculate linear trends via simple least squares regression
+    // y = mx + c
+    let slope = 0;
+    if (denseDaily.length >= 3) {
+      const n = denseDaily.length;
+      let sumX = 0;
+      let sumY = 0;
+      let sumXY = 0;
+      let sumXX = 0;
+      denseDaily.forEach(d => {
+        sumX += d.tIndex;
+        sumY += d.val;
+        sumXY += d.tIndex * d.val;
+        sumXX += d.tIndex * d.tIndex;
+      });
+      const numerator = (n * sumXY) - (sumX * sumY);
+      const denominator = (n * sumXX) - (sumX * sumX);
+      if (denominator !== 0) {
+        slope = numerator / denominator;
+      }
+    }
+
+    // Dampen slope to avoid projecting hyper-aggressive shifts
+    const maxSlope = baseline * 0.1; // Limit growth rate projection to 10% average daily sales per day
+    slope = Math.min(maxSlope, Math.max(-maxSlope, slope));
+
+    // Predict the next 7 days (starting tomorrow)
+    const predictions: { date: string; dayIndex: number; dayName: string; predictedVal: number }[] = [];
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    
+    let predictedTotal = 0;
+    for (let i = 1; i <= 7; i++) {
+      const futureDate = new Date(todayDate.getTime() + i * msInDay);
+      const futureDateStr = futureDate.toISOString().split('T')[0];
+      const futureDayIdx = futureDate.getDay();
+      
+      // Calculate future trend point
+      const xValue = denseDaily.length - 1 + i;
+      const trendPoint = baseline + (slope * xValue);
+      const seasonality = weekdayFactors[futureDayIdx];
+      
+      // Combine components
+      let predictedVal = Math.max(0, trendPoint) * seasonality;
+      predictedVal = isNaN(predictedVal) ? 0 : parseFloat(predictedVal.toFixed(2));
+      
+      predictions.push({
+        date: futureDateStr,
+        dayIndex: futureDayIdx,
+        dayName: dayNames[futureDayIdx],
+        predictedVal
+      });
+      predictedTotal += predictedVal;
+    }
+
+    // Historical past 7 days for comparison in chart
+    const historicalPast7 = denseDaily.slice(-7).map(d => ({
+      date: d.dateStr,
+      dayName: dayNames[d.dayOfWeek].slice(0, 3),
+      value: parseFloat(d.val.toFixed(2)),
+      isPrediction: false
+    }));
+
+    // Combined chart data: historical in first 7 slots, predicted in next 7 slots
+    const combinedChartData = [
+      ...historicalPast7.map(h => ({
+        name: h.dayName,
+        actual: h.value,
+        predicted: null,
+        label: 'Historical'
+      })),
+      ...predictions.map(p => ({
+        name: p.dayName.slice(0, 3) + '*',
+        actual: null,
+        predicted: p.predictedVal,
+        label: 'Expected'
+      }))
+    ];
+
+    let confidence: 'High' | 'Moderate' | 'Low' = 'Low';
+    if (denseDaily.length >= 14) {
+      confidence = 'High';
+    } else if (denseDaily.length >= 5) {
+      confidence = 'Moderate';
+    }
+
+    let trendDirection: 'Rising' | 'Declining' | 'Stable' = 'Stable';
+    if (slope > baseline * 0.015) {
+      trendDirection = 'Rising';
+    } else if (slope < -baseline * 0.015) {
+      trendDirection = 'Declining';
+    }
+
+    return {
+      predictedTotal: Math.round(predictedTotal),
+      chartData: combinedChartData,
+      confidence,
+      baseline: Math.round(baseline),
+      trendDirection,
+      hasData: true,
+      slope: parseFloat(slope.toFixed(2))
+    };
+  }, [transactions]);
+
   const handleExportPDF = async () => {
     if (!dashboardRef.current) return;
     setIsExporting(true);
@@ -658,7 +959,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
   const SalesTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
       return (
-        <div className="bg-white dark:bg-gray-900 p-4 border border-gray-200 dark:border-gray-800 rounded-xl shadow-xl z-50">
+        <div className="bg-white dark:bg-gray-900 p-4 border border-gray-200 dark:border-gray-800 rounded-2xl shadow-xl z-50">
           <div className="space-y-3">
             <div>
               <p className="font-bold text-gray-900 dark:text-white text-sm border-b border-gray-100 dark:border-gray-800 pb-1 mb-1">{payload[0].payload.fullDate}</p>
@@ -688,7 +989,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
   const HourlyTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
         return (
-            <div className="bg-white dark:bg-gray-900 p-4 border border-gray-200 dark:border-gray-800 rounded-xl shadow-xl z-50">
+            <div className="bg-white dark:bg-gray-900 p-4 border border-gray-200 dark:border-gray-800 rounded-2xl shadow-xl z-50">
                 <p className="font-bold text-gray-900 dark:text-white mb-2 border-b border-gray-100 dark:border-gray-800 pb-2">{label}</p>
                 <div className="space-y-1.5 text-sm">
                     <div className="flex items-center gap-2">
@@ -725,13 +1026,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
            <h1 className="text-3xl font-black text-gray-900 dark:text-white tracking-tight">Dashboard</h1>
         </div>
         <div className="flex gap-2 no-export flex-wrap">
-            <button onClick={() => setIsItemsSoldModalOpen(true)} className="bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-gray-700 px-4 py-2 rounded-xl font-bold text-sm hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors flex items-center gap-2 shadow-sm">
+            <button onClick={() => setIsItemsSoldModalOpen(true)} className="bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border border-gray-100 dark:border-gray-800 px-4 py-2 rounded-2xl font-bold text-sm hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors flex items-center gap-2 shadow-sm">
                 <ShoppingBag className="w-4 h-4 text-blue-500" /> Items Sold
             </button>
-            <button onClick={handleExportPDF} disabled={isExporting} className="bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-gray-700 px-4 py-2 rounded-xl font-bold text-sm hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors flex items-center gap-2 shadow-sm">
+            <button onClick={handleExportPDF} disabled={isExporting} className="bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border border-gray-100 dark:border-gray-800 px-4 py-2 rounded-2xl font-bold text-sm hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors flex items-center gap-2 shadow-sm">
                 {isExporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />} Export
             </button>
-            <button onClick={fetchInsight} disabled={loadingInsight} className="bg-gradient-to-r from-purple-600 to-indigo-600 text-white px-4 py-2 rounded-xl font-bold text-sm hover:shadow-lg transition-all flex items-center gap-2">
+            <button onClick={fetchInsight} disabled={loadingInsight} className="bg-gradient-to-r from-purple-600 to-indigo-600 text-white px-4 py-2 rounded-2xl font-bold text-sm hover:shadow-lg transition-all flex items-center gap-2">
                 {loadingInsight ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />} AI Tips
             </button>
         </div>
@@ -739,7 +1040,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
 
       {/* 1. ACTION PANEL (Insights & Critical Alerts) */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2 bg-gradient-to-br from-indigo-50 to-purple-50 dark:from-indigo-900/20 dark:to-purple-900/20 border border-indigo-100 dark:border-indigo-800 rounded-2xl p-6 relative overflow-hidden shadow-[0_4px_12px_rgba(0,0,0,0.08)]">
+          <div className="lg:col-span-2 bg-gradient-to-br from-indigo-50 to-purple-50 dark:from-indigo-900/20 dark:to-purple-900/20 border border-indigo-100 dark:border-indigo-800 rounded-3xl p-6 relative overflow-hidden shadow-[0_4px_20px_rgba(0,0,0,0.03)] hover:shadow-[0_8px_30px_rgba(0,0,0,0.06)] transition-all">
              <div className="absolute top-0 right-0 p-4 opacity-10"><Sparkles className="w-24 h-24 text-indigo-500" /></div>
              <h3 className="text-indigo-900 dark:text-indigo-200 font-bold flex items-center gap-2 mb-3">
                 <Sparkles className="w-5 h-5" /> Today's Focus
@@ -750,14 +1051,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
                         <div className="flex-1 overflow-y-auto pr-2 space-y-4 mb-4 custom-scrollbar">
                             {chatMessages.map((msg, idx) => (
                                 <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                                    <div className={`max-w-[85%] rounded-2xl px-4 py-3 ${msg.role === 'user' ? 'bg-indigo-600 text-white rounded-br-none' : 'bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 rounded-bl-none shadow-sm border border-gray-100 dark:border-gray-700'}`}>
+                                    <div className={`max-w-[85%] rounded-3xl px-4 py-3 ${msg.role === 'user' ? 'bg-indigo-600 text-white rounded-br-none' : 'bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 rounded-bl-none shadow-sm border border-gray-100 dark:border-gray-700'}`}>
                                         <div className="whitespace-pre-line text-sm">{msg.text}</div>
                                     </div>
                                 </div>
                             ))}
                             {isSendingMessage && (
                                 <div className="flex justify-start">
-                                    <div className="bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 rounded-2xl rounded-bl-none px-4 py-3 shadow-sm border border-gray-100 dark:border-gray-700">
+                                    <div className="bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 rounded-3xl rounded-bl-none px-4 py-3 shadow-sm border border-gray-100 dark:border-gray-700">
                                         <Loader2 className="w-4 h-4 animate-spin" />
                                     </div>
                                 </div>
@@ -769,13 +1070,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
                                 value={chatInput}
                                 onChange={e => setChatInput(e.target.value)}
                                 placeholder="Ask a follow-up question..."
-                                className="flex-1 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:text-white"
+                                className="flex-1 bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 rounded-2xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:text-white"
                                 disabled={isSendingMessage}
                             />
                             <button 
                                 type="submit" 
                                 disabled={isSendingMessage || !chatInput.trim()}
-                                className="bg-indigo-600 text-white p-2 rounded-xl hover:bg-indigo-700 transition-colors disabled:opacity-50"
+                                className="bg-indigo-600 text-white p-2 rounded-2xl hover:bg-indigo-700 transition-colors disabled:opacity-50"
                             >
                                 <ArrowRight className="w-5 h-5" />
                             </button>
@@ -791,7 +1092,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
              </div>
           </div>
 
-          <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-100 dark:border-amber-900/30 rounded-2xl p-6 shadow-[0_4px_12px_rgba(0,0,0,0.08)]">
+          <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-100 dark:border-amber-900/30 rounded-3xl p-6 shadow-[0_4px_20px_rgba(0,0,0,0.03)] hover:shadow-[0_8px_30px_rgba(0,0,0,0.06)] transition-all">
              <h3 className="text-amber-900 dark:text-amber-200 font-bold flex items-center gap-2 mb-4">
                 <AlertTriangle className="w-5 h-5" /> Needs Attention
              </h3>
@@ -856,10 +1157,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
       {/* 2. FINANCIAL TRUTHS (Cards) */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
          {/* Sales & Profit Card - Combined for maximum utility */}
-         <div className={`rounded-2xl p-6 shadow-[0_4px_12px_rgba(0,0,0,0.08)] border flex flex-col justify-between relative overflow-hidden transition-all ${
+         <div className={`rounded-3xl p-6 shadow-[0_4px_20px_rgba(0,0,0,0.03)] hover:shadow-[0_8px_30px_rgba(0,0,0,0.06)] border flex flex-col justify-between relative overflow-hidden transition-all ${
              isAllTimeHigh 
                 ? 'bg-gradient-to-br from-yellow-400 via-yellow-500 to-yellow-600 border-yellow-300 dark:border-yellow-500 shadow-yellow-500/30' 
-                : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700'
+                : 'bg-white dark:bg-gray-800 border-gray-100 dark:border-gray-800'
          }`}>
             {/* Background decoration for target met */}
             {isAllTimeHigh && <div className="absolute top-0 right-0 w-32 h-32 bg-white/20 rounded-full blur-3xl -mr-10 -mt-10 pointer-events-none"></div>}
@@ -881,7 +1182,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
                             <span className={`font-normal ${isAllTimeHigh ? 'text-yellow-800/60' : 'text-gray-400'}`}>vs. last {lastWeekDayName} same time</span>
                         </div>
                     </div>
-                    <div className={`p-3 rounded-xl relative ${isAllTimeHigh ? 'bg-white/20 text-white' : (isTargetMet ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-indigo-50 text-indigo-600 dark:bg-indigo-900/20 dark:text-indigo-400')}`}>
+                    <div className={`p-3 rounded-2xl relative ${isAllTimeHigh ? 'bg-white/20 text-white' : (isTargetMet ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-indigo-50 text-indigo-600 dark:bg-indigo-900/20 dark:text-indigo-400')}`}>
                         {isAllTimeHigh && <Sparkles className="w-4 h-4 absolute -top-1 -right-1 text-yellow-200 animate-pulse" />}
                         {isTargetMet ? <Target className="w-6 h-6" /> : <ShoppingBag className="w-6 h-6" />}
                     </div>
@@ -929,7 +1230,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
          </div>
 
          {/* Cash Accountability */}
-         <div className={`rounded-2xl p-6 shadow-[0_4px_12px_rgba(0,0,0,0.08)] border relative overflow-hidden ${hasCashVariance ? 'bg-red-50 dark:bg-red-900/10 border-red-200 dark:border-red-800' : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700'}`}>
+         <div className={`rounded-3xl p-6 shadow-[0_4px_20px_rgba(0,0,0,0.03)] border relative overflow-hidden ${hasCashVariance ? 'bg-red-50 dark:bg-red-900/10 border-red-200 dark:border-red-800' : 'bg-white dark:bg-gray-800 border-gray-100 dark:border-gray-800'}`}>
             <div className="absolute top-0 right-0 w-20 h-20 bg-gray-50 dark:bg-gray-700 rounded-bl-full -mr-4 -mt-4 z-0 opacity-50"></div>
             <div className="relative z-10">
                 <div className="flex justify-between items-start mb-4">
@@ -937,7 +1238,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
                         <p className="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">Cash In Drawer</p>
                         <h2 className="text-3xl font-black text-gray-900 dark:text-white mt-1">{storeProfile.currency} {expectedCash.toLocaleString()}</h2>
                     </div>
-                    <div className="p-3 bg-gray-100 dark:bg-gray-700 rounded-xl text-gray-600 dark:text-gray-300">
+                    <div className="p-3 bg-gray-100 dark:bg-gray-700 rounded-2xl text-gray-600 dark:text-gray-300">
                         <Banknote className="w-6 h-6" />
                     </div>
                 </div>
@@ -947,7 +1248,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
                         <span className="font-bold text-gray-900 dark:text-white">+{cashCollected.toLocaleString()}</span>
                     </div>
                     {actualCash !== undefined && (
-                        <div className="flex justify-between items-center pt-1 mt-1 border-t border-dashed border-gray-200 dark:border-gray-700">
+                        <div className="flex justify-between items-center pt-1 mt-1 border-t border-dashed border-gray-100 dark:border-gray-800">
                             <span className="text-xs font-bold uppercase">Variance:</span>
                             <span className={`font-black ${cashVariance >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                                 {cashVariance > 0 ? '+' : ''}{cashVariance.toLocaleString()}
@@ -959,13 +1260,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
          </div>
 
           {/* M-Pesa Till */}
-         <div className={`rounded-2xl p-6 shadow-[0_4px_12px_rgba(0,0,0,0.08)] border relative overflow-hidden ${hasMpesaVariance ? 'bg-red-50 dark:bg-red-900/10 border-red-200 dark:border-red-800' : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700'}`}>
+         <div className={`rounded-3xl p-6 shadow-[0_4px_20px_rgba(0,0,0,0.03)] hover:shadow-[0_8px_30px_rgba(0,0,0,0.06)] border relative overflow-hidden transition-all ${hasMpesaVariance ? 'bg-red-50 dark:bg-red-900/10 border-red-200 dark:border-red-800' : 'bg-white dark:bg-gray-800 border-gray-100 dark:border-gray-800'}`}>
             <div className="flex justify-between items-start mb-4">
                 <div>
                     <p className="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">M-Pesa Till</p>
                     <h2 className="text-3xl font-black text-green-600 dark:text-green-400 mt-1">{storeProfile.currency} {expectedMpesa.toLocaleString()}</h2>
                 </div>
-                <div className="p-3 bg-green-50 dark:bg-green-900/20 rounded-xl text-green-600 dark:text-green-400">
+                <div className="p-3 bg-green-50 dark:bg-green-900/20 rounded-2xl text-green-600 dark:text-green-400">
                     <CreditCard className="w-6 h-6" />
                 </div>
             </div>
@@ -975,7 +1276,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
                     <span className="font-bold text-gray-900 dark:text-white">+{mpesaCollected.toLocaleString()}</span>
                 </div>
                 {actualMpesa !== undefined && (
-                    <div className="flex justify-between items-center pt-1 mt-1 border-t border-dashed border-gray-200 dark:border-gray-700">
+                    <div className="flex justify-between items-center pt-1 mt-1 border-t border-dashed border-gray-100 dark:border-gray-800">
                         <span className="text-xs font-bold uppercase">Variance:</span>
                         <span className={`font-black ${mpesaVariance >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                             {mpesaVariance > 0 ? '+' : ''}{mpesaVariance.toLocaleString()}
@@ -989,14 +1290,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
       {/* 3. STRATEGIC GROWTH HUB */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
              {/* Missed Sales & Reinvestment Sprint (2/3 width) */}
-             <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700 flex flex-col h-full lg:col-span-2">
+             <div className="bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-[0_4px_20px_rgba(0,0,0,0.03)] hover:shadow-[0_8px_30px_rgba(0,0,0,0.06)] transition-all border border-gray-100 dark:border-gray-800 flex flex-col h-full lg:col-span-2">
                  <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2 mb-6 uppercase text-sm tracking-widest">
                     <Target className="w-5 h-5 text-purple-500" /> Reinvestment Sprint Intelligence
                  </h3>
                  <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
                     <div>
                         <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-4">Opportunity Cost</h4>
-                        <div className="bg-purple-50 dark:bg-purple-900/10 border border-purple-100 dark:border-purple-900/30 rounded-xl p-4 flex items-center justify-between">
+                        <div className="bg-purple-50 dark:bg-purple-900/10 border border-purple-100 dark:border-purple-900/30 rounded-2xl p-4 flex items-center justify-between">
                             <div>
                                 <p className="text-2xl font-black text-purple-600 dark:text-purple-400 tracking-tight">
                                     {storeProfile.currency} {missedSales.reduce((acc, sale) => acc + sale.lostProfit, 0).toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 0})}
@@ -1020,7 +1321,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
                                 <span className="text-gray-500">{(storeProfile.currentPersonalSavings || 0).toLocaleString()} saved</span>
                                 <span className="text-emerald-600">Goal: {(storeProfile.personalSavingsGoal || 0).toLocaleString()}</span>
                             </div>
-                            <p className="text-[9px] text-gray-500 mt-3 font-medium bg-gray-50 dark:bg-gray-900/50 p-2 rounded-lg border border-gray-100 dark:border-gray-800 leading-tight">
+                            <p className="text-[9px] text-gray-500 mt-3 font-medium bg-gray-50 dark:bg-gray-900/50 p-2 rounded-xl border border-gray-100 dark:border-gray-800 leading-tight">
                                 <span className="text-purple-600 font-bold uppercase tracking-tighter">Tip:</span> Capturing your lost profit would close the gap by <span className="text-purple-700 font-black">{(((missedSales.reduce((acc, sale) => acc + sale.lostProfit, 0)) / (storeProfile.personalSavingsGoal || 1)) * 100).toFixed(1)}%</span>!
                             </p>
                         </div>
@@ -1033,7 +1334,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
                         <div className="space-y-3">
                             {missedSalesIntelligence.length > 0 ? (
                                 missedSalesIntelligence.slice(0, 2).map((item, idx) => (
-                                    <div key={idx} className="p-3 bg-amber-50/50 dark:bg-amber-900/10 border border-amber-100 dark:border-amber-900/30 rounded-xl relative overflow-hidden group">
+                                    <div key={idx} className="p-3 bg-amber-50/50 dark:bg-amber-900/10 border border-amber-100 dark:border-amber-900/30 rounded-2xl relative overflow-hidden group">
                                         <div className="absolute top-0 right-0 p-1">
                                             <div className="bg-amber-500 text-[7px] text-white px-1.5 py-0.5 rounded-bl-lg font-black uppercase tracking-tighter">High Priority</div>
                                         </div>
@@ -1045,23 +1346,23 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
                                     </div>
                                 ))
                             ) : (
-                                <div className="text-center py-6 border-2 border-dashed border-gray-100 dark:border-gray-800 rounded-xl">
+                                <div className="text-center py-6 border-2 border-dashed border-gray-100 dark:border-gray-800 rounded-2xl">
                                     <p className="text-[9px] text-gray-400 font-bold uppercase tracking-widest leading-tight">Data logging<br/>in progress...</p>
                                 </div>
                             )}
-                            <div className="p-3 bg-blue-50 dark:bg-blue-900/10 border border-blue-100 dark:border-blue-900/30 rounded-xl text-[9px] text-blue-700 dark:text-blue-400 leading-tight">
+                            <div className="p-3 bg-blue-50 dark:bg-blue-900/10 border border-blue-100 dark:border-blue-900/30 rounded-2xl text-[9px] text-blue-700 dark:text-blue-400 leading-tight">
                                 <strong className="block mb-1 text-blue-900 dark:text-blue-200 uppercase tracking-widest">The 3-Day Rule</strong>
                                 Bulk re-invest only after 3 missed days. Stock small volumes for daily items first.
                             </div>
                         </div>
                     </div>
 
-                    <div className="bg-gray-50 dark:bg-gray-900/50 rounded-xl border border-gray-100 dark:border-gray-800 p-4">
+                    <div className="bg-gray-50 dark:bg-gray-900/50 rounded-2xl border border-gray-100 dark:border-gray-800 p-4">
                         <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-4">Recent Missed</h4>
                         <div className="space-y-2 overflow-y-auto max-h-[160px] custom-scrollbar pr-1">
                             {missedSales.length > 0 ? (
                                 missedSales.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()).slice(0, 5).map(sale => (
-                                    <div key={sale.id} className="bg-white dark:bg-gray-800 p-2 rounded-lg border border-gray-100 dark:border-gray-700 shadow-sm flex items-center justify-between group h-10">
+                                    <div key={sale.id} className="bg-white dark:bg-gray-800 p-2 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm flex items-center justify-between group h-10">
                                         <p className="font-bold text-[10px] text-gray-800 dark:text-gray-200 truncate pr-2 flex-1">{sale.itemName}</p>
                                         <div className="text-right shrink-0">
                                             <p className="text-[9px] font-black text-red-500">-{sale.lostProfit.toFixed(0)}</p>
@@ -1080,13 +1381,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
              </div>
 
              {/* Stock Health Snapshot (1/3 width) */}
-             <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700 flex flex-col h-full">
+             <div className="bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-[0_4px_20px_rgba(0,0,0,0.03)] hover:shadow-[0_8px_30px_rgba(0,0,0,0.06)] transition-all border border-gray-100 dark:border-gray-800 flex flex-col h-full">
                 <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2 mb-6 uppercase text-sm tracking-widest">
                     <Package className="w-5 h-5 text-indigo-500" /> Stock Health
                 </h3>
                 
                 <div className="space-y-4">
-                    <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-900/50 rounded-xl border border-gray-100 dark:border-gray-800">
+                    <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-900/50 rounded-2xl border border-gray-100 dark:border-gray-800">
                         <div>
                             <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Total Value</p>
                             <p className="text-xl font-black text-gray-900 dark:text-white">{storeProfile.currency} {totalStockValue.toLocaleString()}</p>
@@ -1097,7 +1398,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
                     </div>
 
                     <div 
-                        className="flex items-center justify-between p-3 bg-amber-50 dark:bg-amber-900/10 rounded-xl border border-amber-100 dark:border-amber-900/30 cursor-pointer hover:bg-amber-100 transition-all shadow-sm"
+                        className="flex items-center justify-between p-3 bg-amber-50 dark:bg-amber-900/10 rounded-2xl border border-amber-100 dark:border-amber-900/30 cursor-pointer hover:bg-amber-100 transition-all shadow-sm"
                         onClick={() => setViewDetails({ title: 'Low Stock Risks', items: lowStockItems })}
                     >
                         <div>
@@ -1110,7 +1411,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
                     </div>
 
                     <div 
-                        className="flex items-center justify-between p-3 bg-orange-50 dark:bg-orange-900/10 rounded-xl border border-orange-100 dark:border-orange-900/30 cursor-pointer hover:bg-orange-100 transition-all shadow-sm"
+                        className="flex items-center justify-between p-3 bg-orange-50 dark:bg-orange-900/10 rounded-2xl border border-orange-100 dark:border-orange-900/30 cursor-pointer hover:bg-orange-100 transition-all shadow-sm"
                         onClick={() => setViewDetails({ title: 'Expiring Items', items: expiringSoonItems })}
                     >
                         <div>
@@ -1123,7 +1424,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
                     </div>
 
                     <div 
-                        className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-900/50 rounded-xl border border-gray-100 dark:border-gray-800 cursor-pointer hover:bg-gray-100 transition-all opacity-80"
+                        className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-900/50 rounded-2xl border border-gray-100 dark:border-gray-800 cursor-pointer hover:bg-gray-100 transition-all opacity-80"
                         onClick={() => setViewDetails({ title: 'Slow Moving Items', items: slowMovingItems })}
                     >
                         <div>
@@ -1141,12 +1442,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
       {/* 4. FINANCIAL TRENDS */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
              {/* Sales Chart */}
-             <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700">
+             <div className="bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-[0_4px_20px_rgba(0,0,0,0.03)] hover:shadow-[0_8px_30px_rgba(0,0,0,0.06)] transition-all border border-gray-100 dark:border-gray-800">
                 <div className="flex justify-between items-center mb-6">
                     <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2">
                         <TrendingUp className="w-5 h-5 text-blue-500" /> Sales Trend
                     </h3>
-                    <div className="flex bg-gray-100 dark:bg-gray-700 rounded-lg p-1">
+                    <div className="flex bg-gray-100 dark:bg-gray-700 rounded-xl p-1">
                         <button onClick={() => setSalesView('weekly')} className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${salesView === 'weekly' ? 'bg-white dark:bg-gray-600 shadow-sm text-black dark:text-white' : 'text-gray-500'}`}>Week</button>
                         <button onClick={() => setSalesView('monthly')} className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${salesView === 'monthly' ? 'bg-white dark:bg-gray-600 shadow-sm text-black dark:text-white' : 'text-gray-500'}`}>Month</button>
                         <button onClick={() => setSalesView('yearly')} className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${salesView === 'yearly' ? 'bg-white dark:bg-gray-600 shadow-sm text-black dark:text-white' : 'text-gray-500'}`}>Year</button>
@@ -1173,12 +1474,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
              </div>
 
              {/* Profit Chart */}
-             <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700">
+             <div className="bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-[0_4px_20px_rgba(0,0,0,0.03)] hover:shadow-[0_8px_30px_rgba(0,0,0,0.06)] transition-all border border-gray-100 dark:border-gray-800">
                 <div className="flex justify-between items-center mb-6">
                     <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2">
                         <DollarSign className="w-5 h-5 text-emerald-500" /> Profit Trend
                     </h3>
-                    <div className="flex bg-gray-100 dark:bg-gray-700 rounded-lg p-1">
+                    <div className="flex bg-gray-100 dark:bg-gray-700 rounded-xl p-1">
                         <button onClick={() => setSalesView('weekly')} className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${salesView === 'weekly' ? 'bg-white dark:bg-gray-600 shadow-sm text-black dark:text-white' : 'text-gray-500'}`}>Week</button>
                         <button onClick={() => setSalesView('monthly')} className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${salesView === 'monthly' ? 'bg-white dark:bg-gray-600 shadow-sm text-black dark:text-white' : 'text-gray-500'}`}>Month</button>
                         <button onClick={() => setSalesView('yearly')} className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${salesView === 'yearly' ? 'bg-white dark:bg-gray-600 shadow-sm text-black dark:text-white' : 'text-gray-500'}`}>Year</button>
@@ -1207,12 +1508,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
       {/* 5. OPERATIONAL TRENDS */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
              {/* Inventory Value Trend Chart */}
-             <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700">
+             <div className="bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-[0_4px_20px_rgba(0,0,0,0.03)] hover:shadow-[0_8px_30px_rgba(0,0,0,0.06)] transition-all border border-gray-100 dark:border-gray-800">
                 <div className="flex justify-between items-center mb-6">
                     <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2">
                         <Package className="w-5 h-5 text-purple-500" /> Inventory Value Trend
                     </h3>
-                    <div className="flex bg-gray-100 dark:bg-gray-700 rounded-lg p-1">
+                    <div className="flex bg-gray-100 dark:bg-gray-700 rounded-xl p-1">
                         <button onClick={() => setInventoryTrendView('weekly')} className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${inventoryTrendView === 'weekly' ? 'bg-white dark:bg-gray-600 shadow-sm text-black dark:text-white' : 'text-gray-500'}`}>Week</button>
                         <button onClick={() => setInventoryTrendView('monthly')} className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${inventoryTrendView === 'monthly' ? 'bg-white dark:bg-gray-600 shadow-sm text-black dark:text-white' : 'text-gray-500'}`}>Month</button>
                         <button onClick={() => setInventoryTrendView('yearly')} className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${inventoryTrendView === 'yearly' ? 'bg-white dark:bg-gray-600 shadow-sm text-black dark:text-white' : 'text-gray-500'}`}>Year</button>
@@ -1242,7 +1543,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
              </div>
 
              {/* Expenses Trend Chart */}
-             <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700">
+             <div className="bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-[0_4px_20px_rgba(0,0,0,0.03)] hover:shadow-[0_8px_30px_rgba(0,0,0,0.06)] transition-all border border-gray-100 dark:border-gray-800">
                  <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2 mb-6">
                     <TrendingDown className="w-5 h-5 text-red-500" /> Expenses Trend
                  </h3>
@@ -1276,7 +1577,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
       {/* 6. DETAILED ANALYSIS */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
              {/* Hourly Activity Pattern */}
-             <div className="lg:col-span-2 bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700">
+             <div className="lg:col-span-2 bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-[0_4px_20px_rgba(0,0,0,0.03)] hover:shadow-[0_8px_30px_rgba(0,0,0,0.06)] transition-all border border-gray-100 dark:border-gray-800">
                  <div className="flex flex-col sm:flex-row justify-between items-center mb-6 gap-4">
                      <div>
                          <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2">
@@ -1288,7 +1589,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
                          <select
                              value={selectedDayFilter}
                              onChange={(e) => setSelectedDayFilter(e.target.value)}
-                             className="w-full appearance-none pl-4 pr-10 py-2.5 bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-xl text-sm font-bold text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-primary-500 cursor-pointer shadow-sm"
+                             className="w-full appearance-none pl-4 pr-10 py-2.5 bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-2xl text-sm font-bold text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-primary-500 cursor-pointer shadow-sm"
                          >
                              <option value="All">All Days (Avg.)</option>
                              {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].map(day => (
@@ -1347,7 +1648,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
              </div>
 
              {/* Payment Methods Pie */}
-             <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700">
+             <div className="bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-[0_4px_20px_rgba(0,0,0,0.03)] hover:shadow-[0_8px_30px_rgba(0,0,0,0.06)] transition-all border border-gray-100 dark:border-gray-800">
                  <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2 mb-6">
                     <Wallet className="w-5 h-5 text-purple-500" /> Revenue Source (Today)
                  </h3>
@@ -1382,7 +1683,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
       {/* 7. PERFORMANCE & CATEGORIES */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
              {/* Performers & Spenders */}
-             <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700 flex flex-col h-full lg:col-span-1">
+             <div className="bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-[0_4px_20px_rgba(0,0,0,0.03)] hover:shadow-[0_8px_30px_rgba(0,0,0,0.06)] transition-all border border-gray-100 dark:border-gray-800 flex flex-col h-full lg:col-span-1">
                  <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2 mb-6 uppercase text-sm tracking-widest">
                     <PieChartIcon className="w-5 h-5 text-indigo-500" /> Top Performers
                 </h3>
@@ -1418,7 +1719,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
 
                 <div className="space-y-4 flex-1 overflow-y-auto pr-1">
                     {bestSellersData.length > 0 ? bestSellersData.map((item, index) => (
-                        <div key={index} className="flex items-center justify-between group hover:bg-gray-50 dark:hover:bg-gray-700/50 p-2 rounded-lg transition-colors">
+                        <div key={index} className="flex items-center justify-between group hover:bg-gray-50 dark:hover:bg-gray-700/50 p-2 rounded-xl transition-colors">
                             <div className="flex items-center gap-3">
                                 <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white shadow-sm shrink-0" style={{ backgroundColor: COLORS[index % COLORS.length] }}>
                                     {index + 1}
@@ -1434,18 +1735,18 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
                          </div>
                     )}
                 </div>
-                <button className="w-full mt-6 py-2.5 text-xs font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/20 rounded-xl hover:bg-indigo-100 dark:hover:bg-indigo-900/40 transition-colors" onClick={() => onNavigate(AppView.INVENTORY)}>
+                <button className="w-full mt-6 py-2.5 text-xs font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/20 rounded-2xl hover:bg-indigo-100 dark:hover:bg-indigo-900/40 transition-colors" onClick={() => onNavigate(AppView.INVENTORY)}>
                     View Full Inventory
                 </button>
              </div>
 
              {/* Top Spenders Chart */}
-             <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700 flex flex-col h-full lg:col-span-1">
+             <div className="bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-[0_4px_20px_rgba(0,0,0,0.03)] hover:shadow-[0_8px_30px_rgba(0,0,0,0.06)] transition-all border border-gray-100 dark:border-gray-800 flex flex-col h-full lg:col-span-1">
                  <div className="flex justify-between items-center mb-6">
                     <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2 uppercase text-sm tracking-widest">
                         <Target className="w-5 h-5 text-emerald-500" /> Top Spenders
                     </h3>
-                    <div className="flex bg-gray-100 dark:bg-gray-700 rounded-lg p-1">
+                    <div className="flex bg-gray-100 dark:bg-gray-700 rounded-xl p-1">
                         <button onClick={() => setSpendingMetric('spent')} className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${spendingMetric === 'spent' ? 'bg-white dark:bg-gray-600 shadow-sm text-black dark:text-white' : 'text-gray-500'}`}>Spent</button>
                         <button onClick={() => setSpendingMetric('points')} className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${spendingMetric === 'points' ? 'bg-white dark:bg-gray-600 shadow-sm text-black dark:text-white' : 'text-gray-500'}`}>Points</button>
                     </div>
@@ -1480,7 +1781,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
                         </div>
                         <div className="space-y-3 flex-1 overflow-y-auto pr-1">
                             {topSpendersData.map((item, index) => (
-                                <div key={index} className="flex items-center justify-between group hover:bg-gray-50 dark:hover:bg-gray-700/50 p-2 rounded-lg transition-colors">
+                                <div key={index} className="flex items-center justify-between group hover:bg-gray-50 dark:hover:bg-gray-700/50 p-2 rounded-xl transition-colors">
                                     <div className="flex items-center gap-3">
                                         <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white shadow-sm shrink-0" style={{ backgroundColor: COLORS[index % COLORS.length] }}>
                                             {index + 1}
@@ -1503,7 +1804,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
              </div>
 
              {/* Category Sales Pie */}
-             <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-700 flex flex-col h-full lg:col-span-1">
+             <div className="bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-[0_4px_20px_rgba(0,0,0,0.03)] hover:shadow-[0_8px_30px_rgba(0,0,0,0.06)] transition-all border border-gray-100 dark:border-gray-800 flex flex-col h-full lg:col-span-1">
                  <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2 mb-6 uppercase text-sm tracking-widest">
                     <PieChartIcon className="w-5 h-5 text-orange-500" /> Categories
                  </h3>
@@ -1535,10 +1836,312 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
              </div>
       </div>
 
+      {/* LEAD-TIME AWARE AUTOMATED RESTOCKING PLANNER */}
+      <div className="bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-[0_4px_20px_rgba(0,0,0,0.03)] hover:shadow-[0_8px_30px_rgba(0,0,0,0.06)] transition-all border border-gray-100 dark:border-gray-800 mb-6">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-5">
+              <div>
+                  <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2 text-base">
+                     <Truck className="w-5 h-5 text-indigo-500 animate-pulse" /> AI Restock Planner (Lead-Time & Velocity Aware)
+                  </h3>
+                  <p className="text-gray-500 text-xs mt-1">
+                     Scans standard 30-day product demand speeds against supplier delivery buffer times, flagging items requiring immediate ordering to stave off stockouts.
+                  </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-3 self-start md:self-auto">
+                  <div className="flex items-center gap-2 bg-indigo-50 dark:bg-indigo-950/30 text-indigo-700 dark:text-indigo-400 text-xs px-3 py-1.5 rounded-xl border border-indigo-100 dark:border-indigo-900/40 font-bold">
+                     <span>{restockSuggestions.filter(s => s.status === 'critical').length} Urgent</span>
+                     <span className="text-gray-300 dark:text-gray-700">|</span>
+                     <span>{restockSuggestions.filter(s => s.status === 'warning').length} Warning</span>
+                  </div>
+                  {restockSuggestions.length > 6 && (
+                      <button
+                          onClick={() => setShowAllRestock(!showAllRestock)}
+                          className="px-3 py-1.5 text-xs font-bold transition-all bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-sm hover:shadow-md cursor-pointer whitespace-nowrap"
+                      >
+                          {showAllRestock ? 'Show Less' : `View All (${restockSuggestions.length})`}
+                      </button>
+                  )}
+              </div>
+          </div>
+
+          {restockSuggestions.length === 0 ? (
+              <div className="text-center text-emerald-600 dark:text-emerald-400 py-8 text-xs flex flex-col items-center justify-center bg-emerald-50/40 dark:bg-emerald-950/10 rounded-2xl border border-emerald-100/50 dark:border-emerald-900/10">
+                  <span className="text-2xl mb-2">✅</span>
+                  <p className="font-bold">Supply Chain is Secure</p>
+                  <p className="text-[11px] text-gray-400 mt-0.5">All products maintain a healthy stock buffer based on current sales speed.</p>
+              </div>
+          ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {(showAllRestock ? restockSuggestions : restockSuggestions.slice(0, 6)).map((item) => {
+                      const isCritical = item.status === 'critical';
+                      return (
+                          <div
+                              key={item.id}
+                              className={`p-4 rounded-2xl border transition-all duration-300 flex flex-col justify-between ${
+                                  isCritical 
+                                      ? 'bg-rose-50/55 dark:bg-rose-950/15 border-rose-100 dark:border-rose-900/30 hover:border-rose-200' 
+                                      : 'bg-amber-50/55 dark:bg-amber-950/10 border-amber-100 dark:border-amber-900/20 hover:border-amber-200'
+                              }`}
+                          >
+                              {/* Header details */}
+                              <div>
+                                  <div className="flex justify-between items-start gap-2 mb-2">
+                                      <span className={`px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider ${
+                                          isCritical 
+                                              ? 'bg-rose-500 text-white animate-pulse' 
+                                              : 'bg-amber-500 text-white'
+                                      }`}>
+                                          {isCritical ? 'Restock Now' : 'Warning'}
+                                      </span>
+                                      
+                                      <span className="text-[10px] text-gray-400 font-bold font-mono">
+                                          {item.category || 'Retail'}
+                                      </span>
+                                  </div>
+
+                                  <h4 className="font-extrabold text-gray-800 dark:text-gray-100 text-xs truncate max-w-full uppercase tracking-tight" title={item.name}>
+                                      {item.name}
+                                  </h4>
+
+                                  {/* Depletion Countdown Meter */}
+                                  <div className="mt-3 bg-white/70 dark:bg-black/30 p-2.5 rounded-xl border border-black/[0.03] dark:border-white/[0.03] text-[11px] space-y-1">
+                                      <div className="flex justify-between text-gray-600 dark:text-gray-300">
+                                          <span>Current Stock:</span>
+                                          <strong className="font-extrabold text-gray-850 dark:text-gray-100">
+                                              {item.stock} {item.measurementUnit || 'pcs'}
+                                          </strong>
+                                      </div>
+                                      <div className="flex justify-between text-gray-600 dark:text-gray-300">
+                                          <span>Sales Speed:</span>
+                                          <strong className="font-bold text-indigo-600 dark:text-indigo-400">
+                                              {item.salesVelocity} units/day
+                                          </strong>
+                                      </div>
+                                      <div className="flex justify-between text-gray-600 dark:text-gray-300">
+                                          <span>Supplier Turnaround:</span>
+                                          <strong className="font-bold text-gray-700 dark:text-gray-200">
+                                              {item.leadTime} {item.leadTime === 1 ? 'day' : 'days'}
+                                          </strong>
+                                      </div>
+
+                                      <div className="pt-1.5 mt-1.5 border-t border-black/[0.04] dark:border-white/[0.04] flex items-center justify-between font-bold">
+                                          <span className="text-gray-500">Runout ETA:</span>
+                                          {item.stock <= 0 ? (
+                                              <span className="text-red-500 font-black uppercase tracking-wider text-[10px]">
+                                                  Exhausted!
+                                              </span>
+                                          ) : item.daysRemaining <= item.leadTime ? (
+                                              <span className="text-rose-500 font-black">
+                                                  {item.daysRemaining} days (Shortfall!)
+                                              </span>
+                                          ) : (
+                                              <span className="text-amber-600 dark:text-amber-400 font-extrabold">
+                                                  {item.daysRemaining} days remaining
+                                              </span>
+                                          )}
+                                      </div>
+                                  </div>
+                              </div>
+
+                              {/* Ordering Suggestion Footer */}
+                              <div className="mt-3.5 pt-3 border-t border-black/[0.04] dark:border-white/[0.04] flex items-center justify-between font-sans">
+                                  <div className="text-[10px] text-gray-400">
+                                      <p className="font-semibold text-gray-500 uppercase tracking-wider text-[8px]">Restore Safety Margin</p>
+                                      <p className="font-black text-xs text-indigo-600 dark:text-indigo-400 mt-0.5">+{item.recommendedOrderQty} units</p>
+                                  </div>
+                                  <div className="text-[10px] text-right font-sans">
+                                      <p className="font-semibold text-gray-500 uppercase tracking-wider text-[8px]">Est. Cash Outlay</p>
+                                      <p className="font-bold text-gray-700 dark:text-gray-200 mt-0.5">
+                                          {storeProfile.currency} {item.restockOutlay.toLocaleString()}
+                                      </p>
+                                  </div>
+                              </div>
+                          </div>
+                      );
+                  })}
+              </div>
+          )}
+      </div>
+
+      {/* 8. WEEKDAY INTELLIGENCE TOOL (Stock Planner for Cash Crunches) */}
+      <div className="bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-[0_4px_20px_rgba(0,0,0,0.03)] hover:shadow-[0_8px_30px_rgba(0,0,0,0.06)] transition-all border border-gray-100 dark:border-gray-800 mb-6">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+              <div>
+                  <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2 text-base">
+                     <Calendar className="w-5 h-5 text-indigo-500" /> Stocking Planner (Daily Demand Profile)
+                  </h3>
+                  <p className="text-gray-500 text-xs mt-1">
+                     Tracks item velocity by day of the week to maximize utility of limited inventory capital during cash crunches.
+                  </p>
+              </div>
+              <div className="bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 text-xs px-3 py-1.5 rounded-lg border border-indigo-100 dark:border-indigo-900/30 font-bold self-start md:self-auto">
+                 💡 Pro-Tip: Minimize slow-moving inventory on peak demand days.
+              </div>
+          </div>
+          
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
+              {bestSellersByDayOfWeek.map((dayData, index) => {
+                  return (
+                      <div key={index} className="bg-gray-50/50 dark:bg-gray-900/50 p-4 rounded-2xl border border-gray-100 dark:border-gray-800/80 shadow-sm flex flex-col justify-between hover:bg-gray-50 dark:hover:bg-gray-800/20 transition-all duration-300">
+                          <div>
+                              <div className="flex items-center justify-between mb-3 border-b border-gray-100 dark:border-gray-800 pb-2">
+                                  <span className="text-xs font-black uppercase text-indigo-600 dark:text-indigo-400 tracking-wider">
+                                      {dayData.dayName.slice(0, 3)}
+                                  </span>
+                                  <span className="text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 font-bold px-2 py-0.5 rounded-md">
+                                     {dayData.topProducts.length} items
+                                  </span>
+                              </div>
+                              
+                              {dayData.topProducts.length > 0 ? (
+                                  <div className="space-y-2.5">
+                                      {dayData.topProducts.map((p, pIdx) => (
+                                          <div key={pIdx} className="flex items-start justify-between gap-1.5 border-b border-dashed border-gray-150 dark:border-gray-800/50 last:border-0 pb-1.5 last:pb-0">
+                                              <span className="text-[11px] font-bold text-gray-800 dark:text-gray-200 line-clamp-1 truncate uppercase" title={p.name}>
+                                                  {p.name}
+                                              </span>
+                                              <span className="text-[9px] bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 font-black px-1.5 py-0.5 rounded shrink-0">
+                                                 {p.quantity}
+                                              </span>
+                                          </div>
+                                      ))}
+                                  </div>
+                              ) : (
+                                  <div className="text-gray-400 dark:text-gray-650 py-6 text-center">
+                                      <p className="text-xs italic font-medium">No sales logs</p>
+                                  </div>
+                              )}
+                          </div>
+                      </div>
+                  );
+              })}
+          </div>
+      </div>
+
+      {/* 9. PREDICTIVE REVENUE INTELLIGENCE TOOL (7-Day Forecast) */}
+      <div className="bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-[0_4px_20px_rgba(0,0,0,0.03)] hover:shadow-[0_8px_30px_rgba(0,0,0,0.06)] transition-all border border-gray-100 dark:border-gray-800 mb-6">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+              <div>
+                  <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2 text-base">
+                     <Sparkles className="w-5 h-5 text-purple-500 animate-pulse" /> AI Revenue Predictor (Next 7 Days)
+                  </h3>
+                  <p className="text-gray-500 text-xs mt-1">
+                     Projects store revenue for the upcoming week based on historic baseline trends and weekday seasonal demand patterns.
+                  </p>
+              </div>
+              <div className="flex items-center gap-3 self-start md:self-auto">
+                  <span className="text-xs text-gray-400 dark:text-gray-500 font-bold">Confidence:</span>
+                  <span className={`px-2.5 py-1 text-xs font-black rounded-lg ${
+                      revenuePrediction.confidence === 'High' ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border border-emerald-100 dark:border-emerald-900/40' :
+                      revenuePrediction.confidence === 'Moderate' ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 border border-amber-100 dark:border-amber-900/45' :
+                      'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'
+                  }`}>
+                      {revenuePrediction.confidence} Confidence
+                  </span>
+              </div>
+          </div>
+
+          {!revenuePrediction.hasData ? (
+              <div className="text-center text-gray-400 py-10 text-sm flex flex-col items-center">
+                  <Activity className="w-10 h-10 mb-3 text-gray-300 animate-bounce" />
+                  <p className="font-bold">Insufficient Sales History</p>
+                  <p className="text-xs mt-1">Record a few transactions to enable AI-powered 7-day revenue forecasts.</p>
+              </div>
+          ) : (
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
+                  {/* Left stats card */}
+                  <div className="lg:col-span-4 flex flex-col gap-4">
+                      <div className="flex-1 bg-gradient-to-br from-purple-50/50 to-indigo-50/20 dark:from-purple-950/20 dark:to-indigo-950/5 p-5 rounded-2xl border border-purple-100/50 dark:border-purple-900/20 flex flex-col justify-between">
+                          <div>
+                              <span className="text-[10px] font-bold text-indigo-500 dark:text-indigo-400 uppercase tracking-wider block mb-1">Expected 7-Day Revenue</span>
+                              <div className="text-3xl font-black text-indigo-900 dark:text-indigo-100 tracking-tight">
+                                  {storeProfile.currency} {revenuePrediction.predictedTotal.toLocaleString()}
+                              </div>
+                              <p className="text-xs text-gray-500 mt-2 leading-relaxed">
+                                  Weighted projection calculated using {transactions.filter(t => t.status !== 'Refunded').length} historic logs, accounting for local seasonal peaks.
+                              </p>
+                          </div>
+                          
+                          <div className="mt-4 pt-4 border-t border-purple-100/50 dark:border-purple-900/30 grid grid-cols-2 gap-4">
+                              <div>
+                                  <span className="text-[9px] font-bold text-gray-400 dark:text-gray-500 uppercase block">Daily Baseline</span>
+                                  <span className="text-sm font-extrabold text-gray-700 dark:text-gray-300">
+                                      {storeProfile.currency} {revenuePrediction.baseline.toLocaleString()}
+                                  </span>
+                              </div>
+                              <div>
+                                  <span className="text-[9px] font-bold text-gray-400 dark:text-gray-500 uppercase block">Trend Slope</span>
+                                  <span className={`text-sm font-extrabold flex items-center gap-1 ${
+                                      revenuePrediction.trendDirection === 'Rising' ? 'text-emerald-500' :
+                                      revenuePrediction.trendDirection === 'Declining' ? 'text-rose-500' :
+                                      'text-gray-500'
+                                  }`}>
+                                      {revenuePrediction.trendDirection === 'Rising' ? '▲' : revenuePrediction.trendDirection === 'Declining' ? '▼' : '▬'} {revenuePrediction.trendDirection}
+                                  </span>
+                              </div>
+                          </div>
+                      </div>
+
+                      <div className="bg-gray-50/50 dark:bg-gray-900/40 p-4 rounded-2xl border border-gray-100 dark:border-gray-800/80">
+                          <span className="text-[9px] font-bold text-[#4f46e5] dark:text-[#818cf8] uppercase tracking-wider block mb-1">Forecast Parameters</span>
+                          <div className="space-y-1.5 text-xs text-gray-600 dark:text-gray-400 leading-relaxed font-sans">
+                              <p>• <span className="font-semibold text-gray-800 dark:text-gray-200">Seasonality Multiplier:</span> Adjusted for high-volume weekends and mid-week quiet spells automatically.</p>
+                              <p>• <span className="font-semibold text-gray-800 dark:text-gray-200">Linear Slope:</span> Overall daily sales velocity is trending at <span className="font-bold text-indigo-500">{revenuePrediction.slope >= 0 ? '+' : ''}{revenuePrediction.slope}</span> units / day.</p>
+                          </div>
+                      </div>
+                  </div>
+
+                  {/* Right chart card */}
+                  <div className="lg:col-span-8 bg-gray-50/45 dark:bg-gray-900/20 p-5 rounded-2xl border border-gray-100 dark:border-gray-800 flex flex-col justify-between">
+                      <div>
+                          <div className="flex items-center justify-between mb-4">
+                              <span className="text-xs font-bold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Forecast Waveform</span>
+                              <div className="flex items-center gap-4 text-[10px] font-bold">
+                                  <span className="flex items-center gap-1.5 text-gray-500">
+                                      <span className="w-3 h-3 rounded-full bg-indigo-200 dark:bg-indigo-950 border border-indigo-500"></span> Historic Sales
+                                  </span>
+                                  <span className="flex items-center gap-1.5 text-indigo-500">
+                                      <span className="w-3 h-3 rounded-full bg-purple-500"></span> Expected Forecast (*)
+                                  </span>
+                              </div>
+                          </div>
+
+                          <div className="h-[220px] w-full">
+                              <ResponsiveContainer width="100%" height="100%">
+                                  <ComposedChart data={revenuePrediction.chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                                      <CartesianGrid strokeDasharray="3 3" opacity={0.1} vertical={false} />
+                                      <XAxis dataKey="name" stroke="#9ca3af" fontSize={10} tickLine={false} axisLine={false} />
+                                      <YAxis stroke="#4f46e5" fontSize={10} tickLine={false} axisLine={false} tickFormatter={(v) => `${(v/1000).toFixed(0)}k`} />
+                                      <Tooltip 
+                                          formatter={(value: any, name: string) => {
+                                              const label = name === 'actual' ? 'Actual Revenue' : 'Expected Forecast';
+                                              return [`${storeProfile.currency} ${parseFloat(value).toLocaleString()}`, label];
+                                          }}
+                                          contentStyle={{ backgroundColor: '#111827', borderColor: '#374151', color: '#fff', borderRadius: '12px' }} 
+                                          itemStyle={{ color: '#fff' }} 
+                                          labelStyle={{ fontWeight: 'bold' }}
+                                      />
+                                      {/* Past Actual Sales Area */}
+                                      <Area type="monotone" dataKey="actual" fill="#818cf8" stroke="#4f46e5" strokeWidth={2.5} fillOpacity={0.15} />
+                                      {/* Predicted Future Sales Bar */}
+                                      <Bar dataKey="predicted" fill="#a855f7" radius={[4, 4, 0, 0]} barSize={24} />
+                                  </ComposedChart>
+                              </ResponsiveContainer>
+                          </div>
+                      </div>
+
+                      <div className="text-[10px] text-gray-400 dark:text-gray-500 text-center mt-3 border-t border-gray-100 dark:border-gray-800 pt-3">
+                          * Days marked with an asterisk (*) represent simulated predictions. Real outcome may fluctuate based on local macro factors.
+                      </div>
+                  </div>
+              </div>
+          )}
+      </div>
+
       {/* 7. DETAILS MODAL (For Slow Moving & Low Stock Cards) */}
       {viewDetails && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md" onClick={() => setViewDetails(null)}>
-          <div className="bg-white dark:bg-gray-900 w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh] border border-gray-200 dark:border-gray-800 animate-fade-in transform scale-100" onClick={e => e.stopPropagation()}>
+          <div className="bg-white dark:bg-gray-900 w-full max-w-2xl rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh] border border-gray-200 dark:border-gray-800 animate-fade-in transform scale-100" onClick={e => e.stopPropagation()}>
              <div className="p-6 border-b border-gray-100 dark:border-gray-800 flex justify-between items-center bg-gray-50 dark:bg-black/50">
                <div>
                   <h3 className="text-xl font-black text-gray-900 dark:text-white tracking-tight">{viewDetails.title}</h3>
@@ -1557,8 +2160,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
                 ) : (
                    <div className="grid gap-3">
                       {viewDetails.items.map(item => (
-                         <div key={item.id} className="flex items-center gap-4 p-3 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm">
-                            <img src={item.image} alt={item.name} className="w-12 h-12 rounded-lg object-cover bg-gray-100 dark:bg-gray-900" />
+                         <div key={item.id} className="flex items-center gap-4 p-3 bg-white dark:bg-gray-800 rounded-2xl border border-gray-100 dark:border-gray-800 shadow-sm">
+                            <img src={item.image} alt={item.name} className="w-12 h-12 rounded-xl object-cover bg-gray-100 dark:bg-gray-900" />
                             <div className="flex-1 min-w-0">
                                <h4 className="font-bold text-gray-900 dark:text-white truncate">{item.name}</h4>
                                <p className="text-xs text-gray-500 dark:text-gray-400">{item.category}</p>
@@ -1585,7 +2188,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
                      setViewDetails(null);
                      onNavigate(AppView.INVENTORY);
                   }}
-                  className="w-full py-3 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded-xl font-bold hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                  className="w-full py-3 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded-2xl font-bold hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
                 >
                   Go to Inventory Manager
                 </button>
@@ -1597,7 +2200,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
       {/* 8. ITEMS SOLD MODAL */}
       {isItemsSoldModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md" onClick={() => setIsItemsSoldModalOpen(false)}>
-          <div className="bg-white dark:bg-gray-900 w-full max-w-md rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh] border border-gray-200 dark:border-gray-800 animate-fade-in transform scale-100" onClick={e => e.stopPropagation()}>
+          <div className="bg-white dark:bg-gray-900 w-full max-w-md rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh] border border-gray-200 dark:border-gray-800 animate-fade-in transform scale-100" onClick={e => e.stopPropagation()}>
              <div className="p-6 border-b border-gray-100 dark:border-gray-800 flex justify-between items-center bg-gray-50 dark:bg-black/50">
                <div>
                   <h3 className="text-xl font-black text-gray-900 dark:text-white flex items-center gap-2">
@@ -1616,7 +2219,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
                     type="date" 
                     value={itemsSoldDate}
                     onChange={(e) => setItemsSoldDate(e.target.value)}
-                    className="w-full bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-700 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
+                    className="w-full bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white px-4 py-3 rounded-2xl border border-gray-100 dark:border-gray-800 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
                 />
              </div>
 
@@ -1624,14 +2227,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, transactions, st
                  {itemsSoldData.length > 0 ? (
                      <div className="space-y-3">
                          {itemsSoldData.map((item, index) => (
-                             <div key={index} className="bg-white dark:bg-gray-800 p-3 rounded-xl border border-gray-200 dark:border-gray-700 flex items-center justify-between shadow-sm hover:shadow-md transition-all group">
+                             <div key={index} className="bg-white dark:bg-gray-800 p-3 rounded-2xl border border-gray-100 dark:border-gray-800 flex items-center justify-between shadow-sm hover:shadow-md transition-all group">
                                  <div className="flex items-center gap-3">
                                      <div className="w-10 h-10 rounded-full bg-blue-50 dark:bg-blue-900/30 flex items-center justify-center text-blue-600 dark:text-blue-400 font-black text-sm border border-blue-100 dark:border-blue-800/50">
                                          {item.quantity}
                                      </div>
                                      <span className="font-bold text-gray-700 dark:text-gray-200 group-hover:text-gray-900 dark:group-hover:text-white transition-colors">{item.name}</span>
                                  </div>
-                                 <span className="text-xs font-bold text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 px-2.5 py-1.5 rounded-lg">
+                                 <span className="text-xs font-bold text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 px-2.5 py-1.5 rounded-xl">
                                      {item.unit}
                                  </span>
                              </div>

@@ -88,6 +88,9 @@ export interface Transaction {
   dueDate?: string;
   cashTendered?: number;
   changeGiven?: number;
+  originalTotal?: number;
+  roundingAdjustment?: number;
+  roundingType?: 'none' | '5' | '10';
 }
 
 export interface ShiftRecord {
@@ -135,6 +138,7 @@ export interface StoreProfile {
   specialDays?: SpecialDay[];
   shortcuts?: Shortcuts;
   customSaleSound?: string; // Base64 audio string
+  customTapSound?: string; // Base64 audio string
   personalSavingsGoal?: number;
   currentPersonalSavings?: number;
 }

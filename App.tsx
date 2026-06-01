@@ -1255,7 +1255,7 @@ const App = () => {
     }
   };
 
-  const handleSoundUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleSoundUpload = async (e: React.ChangeEvent<HTMLInputElement>, type: 'sale' | 'tap' = 'sale') => {
     const file = e.target.files?.[0];
     if (file) {
       if (file.size > 2000000) { // 2MB limit check
@@ -1264,9 +1264,12 @@ const App = () => {
       }
       const reader = new FileReader();
       reader.onloadend = async () => {
-        const newProfile = { ...profile, customSaleSound: reader.result as string };
-        setProfile(newProfile);
-        await db.saveProfile(newProfile);
+        const soundData = reader.result as string;
+        const newProfile = type === 'sale' 
+          ? { ...profile, customSaleSound: soundData }
+          : { ...profile, customTapSound: soundData };
+        setProfile(newProfile as StoreProfile);
+        await db.saveProfile(newProfile as StoreProfile);
       };
       reader.readAsDataURL(file);
     }
@@ -1571,15 +1574,50 @@ const App = () => {
                       type="file" 
                       accept="audio/*"
                       className="hidden" 
-                      onChange={handleSoundUpload} 
+                      onChange={(e) => handleSoundUpload(e, 'sale')} 
                     />
                  </label>
                  {profile.customSaleSound && (
                    <button 
                      onClick={async () => {
                        const newProfile = { ...profile, customSaleSound: undefined };
-                       setProfile(newProfile);
-                       await db.saveProfile(newProfile);
+                       setProfile(newProfile as StoreProfile);
+                       await db.saveProfile(newProfile as StoreProfile);
+                     }}
+                     className="bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400 px-5 py-3 rounded-xl text-sm hover:bg-red-100 dark:hover:bg-red-900/40 transition-all font-bold shadow-sm"
+                   >
+                     Reset to Default
+                   </button>
+                 )}
+               </div>
+             </div>
+           </div>
+        </div>
+
+        <div>
+           <label className="block text-sm font-bold mb-2 dark:text-gray-300">Custom Product Tap Sound (Optional)</label>
+           <div className="flex gap-6 items-center p-4 border border-dashed border-gray-300 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-black/20">
+             <div className="flex-1">
+               <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                 {profile.customTapSound ? 'Custom tap sound loaded.' : 'Using default beep sound.'}
+               </p>
+               <div className="flex gap-3">
+                 <label className="cursor-pointer bg-white dark:bg-gray-800 px-5 py-3 rounded-xl text-sm hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-white transition-all border border-gray-200 dark:border-gray-700 font-bold shadow-sm">
+                    <Upload className="w-4 h-4 inline mr-2" />
+                    Upload Audio
+                    <input 
+                      type="file" 
+                      accept="audio/*"
+                      className="hidden" 
+                      onChange={(e) => handleSoundUpload(e, 'tap')} 
+                    />
+                 </label>
+                 {profile.customTapSound && (
+                   <button 
+                     onClick={async () => {
+                       const newProfile = { ...profile, customTapSound: undefined };
+                       setProfile(newProfile as StoreProfile);
+                       await db.saveProfile(newProfile as StoreProfile);
                      }}
                      className="bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400 px-5 py-3 rounded-xl text-sm hover:bg-red-100 dark:hover:bg-red-900/40 transition-all font-bold shadow-sm"
                    >
@@ -1730,7 +1768,7 @@ const App = () => {
   };
 
   return (
-    <div className="flex h-screen bg-slate-50 dark:bg-black text-gray-900 dark:text-gray-100 font-sans overflow-hidden transition-colors">
+    <div className="flex h-screen bg-[#F6F7FB] dark:bg-black text-gray-900 dark:text-gray-100 font-sans overflow-hidden transition-colors">
       <PinEntryModal 
         isOpen={isPinModalOpen} 
         onClose={() => { setIsPinModalOpen(false); setPendingAdminView(null); }} 
@@ -1867,36 +1905,36 @@ const App = () => {
             {profile.dailySalesTarget && profile.dailySalesTarget > 0 && (
                 <div className="hidden md:flex flex-1 flex-col justify-center max-w-xl mx-auto px-4">
                     <div className="flex justify-between text-[10px] font-bold uppercase tracking-wider mb-1 text-gray-500 dark:text-gray-400">
-                        <span className={
+                        <span className={`transition-colors duration-500 ${
                             todaySales >= profile.dailySalesTarget 
-                            ? 'text-emerald-600 dark:text-emerald-400' 
-                            : todaySales >= profile.dailySalesTarget * 0.75
-                                ? 'text-lime-600 dark:text-lime-400'
-                                : todaySales >= profile.dailySalesTarget * 0.5
-                                ? 'text-yellow-600 dark:text-yellow-400'
-                                : 'text-orange-600 dark:text-orange-400'
-                        }>
+                            ? 'text-emerald-600 dark:text-emerald-400 font-black' 
+                            : 'text-indigo-600 dark:text-indigo-400'
+                        }`}>
                             {profile.currency} {todaySales.toLocaleString()} / {profile.dailySalesTarget.toLocaleString()}
                         </span>
-                        <span className={todaySales >= profile.dailySalesTarget ? "text-emerald-600 dark:text-emerald-400" : "text-gray-600 dark:text-gray-300"}>
+                        <span className={`transition-colors duration-500 ${
+                            todaySales >= profile.dailySalesTarget 
+                            ? "text-emerald-600 dark:text-emerald-400 font-black" 
+                            : "text-gray-500 dark:text-gray-400"
+                        }`}>
                             {todaySales < profile.dailySalesTarget ? `${profile.currency} ${(profile.dailySalesTarget - todaySales).toLocaleString()} to go` : 'Target Reached!'}
                         </span>
                     </div>
                     <div className="flex items-center gap-3">
-                        <div className="h-2 flex-1 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden relative">
+                        <div className="h-3 flex-1 bg-gray-100 dark:bg-gray-800/50 rounded-full p-0.5 relative shadow-inner overflow-hidden">
                             <div 
                                 className={`h-full rounded-full transition-all duration-1000 ease-out relative ${
                                   todaySales >= profile.dailySalesTarget 
-                                    ? 'bg-emerald-500' 
-                                    : todaySales >= profile.dailySalesTarget * 0.75
-                                      ? 'bg-lime-500'
-                                      : todaySales >= profile.dailySalesTarget * 0.5
-                                        ? 'bg-yellow-500'
-                                        : 'bg-orange-500'
+                                    ? 'bg-[#10B981] shadow-[0_0_15px_rgba(16,185,129,0.4)]' 
+                                    : 'bg-gradient-to-r from-[#2affc0] via-[#00e1ff] to-[#0057ff]'
                                 }`} 
-                                style={{ width: `${Math.min(100, (todaySales / profile.dailySalesTarget) * 100)}%` }}
+                                style={{ 
+                                  width: `${Math.min(100, (todaySales / (profile.dailySalesTarget || 1)) * 100)}%`,
+                                }}
                             >
-                                <div className="absolute inset-0 bg-white/20 animate-pulse"></div>
+                                {todaySales >= profile.dailySalesTarget && (
+                                    <div className="absolute inset-0 bg-white/20 animate-pulse"></div>
+                                )}
                             </div>
                         </div>
                         {lastWeekTargetTime && (
@@ -1997,6 +2035,7 @@ const App = () => {
             
             {appMode === 'ADMIN' && view === AppView.FINANCE && (
               <Finance 
+                products={products}
                 transactions={transactions} 
                 shift={currentShift}
                 customers={customers}

@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Transaction, ShiftRecord, StoreProfile, Expense, Customer } from '../types';
-import { Clock, CheckCircle, XCircle, AlertTriangle, FileText, Banknote, CreditCard, ChevronDown, ChevronUp, User, ArrowRight, RotateCcw, Search, Filter, FileDown, History, Plus, X, Phone, LogOut, Printer, Trash2, ClipboardList, Edit3, Target } from 'lucide-react';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell } from 'recharts';
+import { Transaction, ShiftRecord, StoreProfile, Expense, Customer, Product } from '../types';
+import { Clock, CheckCircle, XCircle, AlertTriangle, FileText, Banknote, CreditCard, ChevronDown, ChevronUp, User, ArrowRight, RotateCcw, Search, Filter, FileDown, History, Plus, X, Phone, LogOut, Printer, Trash2, ClipboardList, Edit3, Target, TrendingUp, Percent } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import html2canvas from 'html2canvas';
@@ -10,6 +11,7 @@ import { getStockLogs, getAllShifts } from '../utils/db';
 const generateId = () => Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
 
 interface FinanceProps {
+  products: Product[];
   transactions: Transaction[];
   shift: ShiftRecord | null;
   customers: Customer[];
@@ -28,8 +30,8 @@ interface FinanceProps {
   storeProfile: StoreProfile;
 }
 
-export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers, onAddCustomer, onUpdateCustomer, onDeleteCustomer, onCustomerDeposit, onOpenShift, onCloseShift, onUpdateShift, onPayDebt, onSettleAllDebt, onRefund, onRecordExpense, onSetDueDate, storeProfile }) => {
-  const [activeTab, setActiveTab] = useState<'shift' | 'receipts' | 'debts' | 'expenses' | 'shiftHistory' | 'loyalty'>('shift');
+export const Finance: React.FC<FinanceProps> = ({ products, transactions, shift, customers, onAddCustomer, onUpdateCustomer, onDeleteCustomer, onCustomerDeposit, onOpenShift, onCloseShift, onUpdateShift, onPayDebt, onSettleAllDebt, onRefund, onRecordExpense, onSetDueDate, storeProfile }) => {
+  const [activeTab, setActiveTab] = useState<'shift' | 'receipts' | 'debts' | 'expenses' | 'shiftHistory' | 'loyalty' | 'analytics'>('shift');
   const [openingCash, setOpeningCash] = useState('');
   const [openingMpesa, setOpeningMpesa] = useState('');
   const [closingCash, setClosingCash] = useState('');
@@ -78,6 +80,11 @@ export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers
   // Debt Sorting State
   const [debtSortField, setDebtSortField] = useState<'name' | 'phone' | 'totalDebt' | 'creditBalance' | 'lastActivity'>('totalDebt');
   const [debtSortDirection, setDebtSortDirection] = useState<'asc' | 'desc'>('desc');
+
+  // Heatmap State
+  const [heatmapSearch, setHeatmapSearch] = useState('');
+  const [heatmapCategory, setHeatmapCategory] = useState('All');
+  const [heatmapSort, setHeatmapSort] = useState<'margin-desc' | 'margin-asc' | 'profit-desc' | 'sell-desc'>('margin-desc');
 
   const expenseCategories = ['Supplies', 'Rent', 'Utilities', 'Transport', 'Salaries', 'Other'];
 
@@ -553,6 +560,13 @@ export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers
             >
             Loyalty
             {activeTab === 'loyalty' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-primary-600 rounded-t-full"></div>}
+            </button>
+            <button
+            onClick={() => setActiveTab('analytics')}
+            className={`pb-2 px-1 font-medium text-sm transition-colors relative ${activeTab === 'analytics' ? 'text-primary-600 dark:text-primary-400' : 'text-gray-500 dark:text-gray-400'}`}
+            >
+            Category Margins
+            {activeTab === 'analytics' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-primary-600 rounded-t-full"></div>}
             </button>
         </div>
         
@@ -1953,6 +1967,411 @@ export const Finance: React.FC<FinanceProps> = ({ transactions, shift, customers
                 </div>
             </div>
         </div>
+      )}
+
+      {/* CATEGORY MARGINS ANALYTICS TAB */}
+      {activeTab === 'analytics' && (
+         <div className="flex-1 bg-white dark:bg-gray-900 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] border border-gray-200 dark:border-gray-800 overflow-hidden animate-fade-in flex flex-col min-h-0 text-sm">
+             <div className="p-6 border-b border-gray-100 dark:border-gray-800 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 shrink-0 bg-gray-50/50 dark:bg-black/10">
+                  <div className="flex flex-col gap-1">
+                     <h3 className="text-lg font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                         <Percent className="w-5 h-5 text-primary-600 dark:text-primary-400" /> Category Profit Margins
+                     </h3>
+                     <span className="text-xs text-gray-500 dark:text-gray-400 font-medium">
+                         Displays the margin of profit generated by each category, factoring in actual item cost vs selling price.
+                     </span>
+                  </div>
+                  
+                  {/* Local date selectors affecting the shared states! */}
+                  <div className="flex flex-wrap items-center gap-3">
+                     <div className="flex items-center gap-2">
+                         <span className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest">Shift Link:</span>
+                         <button 
+                           onClick={() => setShowHistory(!showHistory)}
+                           className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-all ${showHistory ? 'bg-primary-50 dark:bg-primary-950/30 text-primary-700 dark:text-primary-400 border-primary-100 dark:border-primary-900/50' : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 border-transparent hover:bg-gray-200 dark:hover:bg-gray-700'}`}
+                         >
+                           {showHistory ? 'All History' : 'Current Shift Only'}
+                         </button>
+                     </div>
+                     <span className="text-gray-300 dark:text-gray-700 font-bold hidden md:inline">|</span>
+                     <div className="flex items-center gap-2">
+                         <span className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest">Range:</span>
+                         <input 
+                           type="date" 
+                           value={filterStartDate}
+                           onChange={(e) => setFilterStartDate(e.target.value)}
+                           className="px-2.5 py-1.5 text-xs border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-black dark:text-white outline-none focus:ring-1 focus:ring-primary-500 font-medium font-sans"
+                         />
+                         <span className="text-gray-400 text-xs">-</span>
+                         <input 
+                           type="date" 
+                           value={filterEndDate}
+                           onChange={(e) => setFilterEndDate(e.target.value)}
+                           className="px-2.5 py-1.5 text-xs border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-black dark:text-white outline-none focus:ring-1 focus:ring-primary-500 font-medium font-sans"
+                         />
+                         {(filterStartDate || filterEndDate) && (
+                             <button
+                               onClick={() => { setFilterStartDate(''); setFilterEndDate(''); }}
+                               className="text-xs text-red-500 font-bold hover:underline ml-1"
+                             >
+                               Clear
+                             </button>
+                         )}
+                     </div>
+                  </div>
+             </div>
+
+             <div className="flex-1 p-6 overflow-y-auto space-y-6">
+                 {/* Logic for Profit Margins metrics calculation */}
+                 {(() => {
+                     // Let's filter the transactions according to selected constraints
+                     const dataFiltered = transactions.filter(t => {
+                         if (!showHistory && shift?.isOpen) {
+                             if (new Date(t.date) < new Date(shift.openedAt)) return false;
+                         }
+                         if (t.status === 'Refunded') return false;
+                         
+                         if (filterStartDate) {
+                             const txStr = new Date(t.date).toISOString().split('T')[0];
+                             if (txStr < filterStartDate) return false;
+                         }
+                         if (filterEndDate) {
+                             const txStr = new Date(t.date).toISOString().split('T')[0];
+                             if (txStr > filterEndDate) return false;
+                         }
+                         return true;
+                     });
+
+                     // Let's aggregate sales & costs by product category
+                     const categoryMetrics: Record<string, { revenue: number; cost: number; itemsSold: number }> = {};
+
+                     dataFiltered.forEach(t => {
+                         t.items.forEach(item => {
+                             const product = products.find(p => p.id === item.productId);
+                             const category = product?.category || 'Uncategorized';
+
+                             if (!categoryMetrics[category]) {
+                                 categoryMetrics[category] = { revenue: 0, cost: 0, itemsSold: 0 };
+                             }
+
+                             const itemRevenue = item.price * item.quantity;
+                             const productBuyPrice = product?.buyPrice || 0;
+                             const itemCost = (item.cost !== undefined && item.cost > 0) ? item.cost : productBuyPrice;
+                             const itemTotalCost = itemCost * item.quantity;
+
+                             categoryMetrics[category].revenue += itemRevenue;
+                             categoryMetrics[category].cost += itemTotalCost;
+                             categoryMetrics[category].itemsSold += item.quantity;
+                         });
+                     });
+
+                     const rawChartData = Object.entries(categoryMetrics).map(([name, metrics]) => {
+                         const profit = metrics.revenue - metrics.cost;
+                         const margin = metrics.revenue > 0 ? (profit / metrics.revenue) * 100 : 0;
+                         return {
+                             name,
+                             revenue: metrics.revenue,
+                             cost: metrics.cost,
+                             profit: Math.max(0, profit),
+                             margin: parseFloat(margin.toFixed(1)),
+                             itemsSold: metrics.itemsSold
+                         };
+                     }).sort((a, b) => b.margin - a.margin); // Sort by margin descending
+
+                     const totalRevenue = rawChartData.reduce((sum, d) => sum + d.revenue, 0);
+                     const totalCost = rawChartData.reduce((sum, d) => sum + d.cost, 0);
+                     const totalProfit = Math.max(0, totalRevenue - totalCost);
+                     const totalMargin = totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0;
+
+                     if (rawChartData.length === 0) {
+                         return (
+                             <div className="flex flex-col items-center justify-center p-12 text-gray-400">
+                                 <AlertTriangle className="w-12 h-12 mb-3 text-amber-500 opacity-60 animate-bounce" />
+                                 <p className="font-bold text-sm text-gray-700 dark:text-gray-300">No transactions recorded for the selected period.</p>
+                                 <p className="text-xs text-gray-500 mt-1">Try clearing date filters or switching shift view filters.</p>
+                             </div>
+                         );
+                     }
+
+                     return (
+                         <div className="space-y-6 font-sans">
+                             {/* Metric Badges */}
+                             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                                 <div className="p-4 bg-gray-50 dark:bg-gray-800/50 rounded-2xl border border-gray-100 dark:border-gray-800">
+                                     <p className="text-[10px] uppercase font-bold text-gray-400 dark:text-gray-500 tracking-wider font-sans">Total Sales (Revenue)</p>
+                                     <p className="text-lg font-black text-gray-900 dark:text-white mt-1">
+                                         {storeProfile.currency} {totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                     </p>
+                                 </div>
+                                 <div className="p-4 bg-gray-50 dark:bg-gray-800/50 rounded-2xl border border-gray-100 dark:border-gray-800">
+                                     <p className="text-[10px] uppercase font-bold text-gray-400 dark:text-gray-500 tracking-wider font-sans">Total COGS (Cost of Goods)</p>
+                                     <p className="text-lg font-black text-gray-900 dark:text-white mt-1">
+                                         {storeProfile.currency} {totalCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                     </p>
+                                 </div>
+                                 <div className="p-4 bg-gray-50 dark:bg-gray-800/50 rounded-2xl border border-gray-100 dark:border-gray-800">
+                                     <p className="text-[10px] uppercase font-bold text-gray-400 dark:text-gray-500 tracking-wider font-sans">Net Profit</p>
+                                     <p className="text-lg font-black text-emerald-600 dark:text-emerald-400 mt-1">
+                                         {storeProfile.currency} {totalProfit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                     </p>
+                                 </div>
+                                 <div className="p-4 bg-primary-50/50 dark:bg-primary-950/20 rounded-2xl border border-primary-100 dark:border-primary-900/40">
+                                     <p className="text-[10px] uppercase font-bold text-primary-700 dark:text-primary-400 tracking-wider font-sans">Overall Margin</p>
+                                     <p className="text-lg font-black text-primary-600 dark:text-primary-400 mt-1">
+                                         {totalMargin.toFixed(1)}%
+                                     </p>
+                                 </div>
+                             </div>
+
+                             {/* PRODUCT HIGHEST/LOWEST PROFIT HEATMAP */}
+                             {(() => {
+                                 const uniqueCategories = Array.from(new Set(products.map(p => p.category))).filter(Boolean);
+
+                                 const heatmapProductsData = products.map(p => {
+                                     const profit = Math.max(0, p.sellPrice - p.buyPrice);
+                                     const margin = p.sellPrice > 0 ? (profit / p.sellPrice) * 100 : 0;
+                                     return {
+                                         ...p,
+                                         profit,
+                                         margin: parseFloat(margin.toFixed(1))
+                                     };
+                                  }).filter(p => {
+                                      const matchesSearch = p.name.toLowerCase().includes(heatmapSearch.toLowerCase()) || 
+                                                            p.category.toLowerCase().includes(heatmapSearch.toLowerCase());
+                                      const matchesCategory = heatmapCategory === 'All' || p.category === heatmapCategory;
+                                      return matchesSearch && matchesCategory;
+                                  });
+
+                                  const sortedHeatmapData = [...heatmapProductsData].sort((a, b) => {
+                                      if (heatmapSort === 'margin-desc') return b.margin - a.margin;
+                                      if (heatmapSort === 'margin-asc') return a.margin - b.margin;
+                                      if (heatmapSort === 'profit-desc') return b.profit - a.profit;
+                                      if (heatmapSort === 'sell-desc') return b.sellPrice - a.sellPrice;
+                                      return 0;
+                                  });
+
+                                  const getMarginStyle = (margin: number) => {
+                                      if (margin < 12) {
+                                          return {
+                                              bg: 'bg-rose-50 hover:bg-rose-100/70 dark:bg-rose-950/20 dark:hover:bg-rose-950/30 border-rose-200 dark:border-rose-900/30',
+                                              text: 'text-rose-700 dark:text-rose-300',
+                                              badge: 'bg-rose-500/10 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300 border border-rose-200 dark:border-rose-800/40',
+                                              desc: 'Low Margin'
+                                          };
+                                      } else if (margin < 25) {
+                                          return {
+                                              bg: 'bg-amber-50 hover:bg-amber-100/70 dark:bg-amber-950/40 dark:hover:bg-amber-950/30 border-amber-200 dark:border-amber-900/30',
+                                              text: 'text-amber-700 dark:text-amber-300',
+                                              badge: 'bg-amber-500/10 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300 border border-amber-200 dark:border-amber-800/40',
+                                              desc: 'Fair Margin'
+                                          };
+                                      } else if (margin < 40) {
+                                          return {
+                                              bg: 'bg-blue-50 hover:bg-blue-100/70 dark:bg-blue-950/15 dark:hover:bg-blue-950/25 border-blue-200 dark:border-blue-900/20',
+                                              text: 'text-blue-700 dark:text-blue-300',
+                                              badge: 'bg-blue-500/10 text-blue-700 dark:bg-blue-500/20 dark:text-blue-300 border border-blue-200 dark:border-blue-800/40',
+                                              desc: 'Good Margin'
+                                          };
+                                      } else {
+                                          return {
+                                              bg: 'bg-emerald-50 hover:bg-emerald-100/70 dark:bg-emerald-950/20 dark:hover:bg-emerald-950/30 border-emerald-250 dark:border-emerald-900/30',
+                                              text: 'text-emerald-700 dark:text-emerald-300',
+                                              badge: 'bg-emerald-500/10 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/40',
+                                              desc: 'Excellent Margin'
+                                          };
+                                      }
+                                  };
+
+                                  return (
+                                      <div className="p-6 bg-white dark:bg-gray-800/60 rounded-3xl border border-gray-100 dark:border-gray-800/80 shadow-sm flex flex-col gap-4">
+                                          <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+                                              <div>
+                                                  <h4 className="text-sm font-bold text-gray-900 dark:text-white flex items-center gap-2 uppercase tracking-wider">
+                                                      <Percent className="w-4 h-4 text-primary-500 animate-pulse" /> Catalog Profitability Heatmap
+                                                  </h4>
+                                                  <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                                                      Visual matrix scaling color intensity by margin. Perfect for pinpointing items that deliver your highest yields or require pricing review.
+                                                  </p>
+                                              </div>
+
+                                              {/* HEATMAP CONTROLS */}
+                                              <div className="flex flex-wrap items-center gap-3">
+                                                  {/* Local Search */}
+                                                  <div className="relative">
+                                                      <Search className="absolute left-2.5 top-2 w-3.5 h-3.5 text-gray-400" />
+                                                      <input
+                                                          type="text"
+                                                          placeholder="Search items..."
+                                                          value={heatmapSearch}
+                                                          onChange={(e) => setHeatmapSearch(e.target.value)}
+                                                          className="pl-8 pr-3 py-1.5 text-xs rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-black/20 text-gray-800 dark:text-white outline-none focus:ring-1 focus:ring-primary-500 w-36 md:w-44 transition-all"
+                                                      />
+                                                  </div>
+
+                                                  {/* Local Category Filter */}
+                                                  <select
+                                                      value={heatmapCategory}
+                                                      onChange={(e) => setHeatmapCategory(e.target.value)}
+                                                      className="px-2.5 py-1.5 text-xs rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-black/20 text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-primary-500 font-medium"
+                                                  >
+                                                      <option value="All">All Categories</option>
+                                                      {uniqueCategories.map(cat => (
+                                                          <option key={cat} value={cat}>{cat}</option>
+                                                      ))}
+                                                  </select>
+
+                                                  {/* Local Sort Selector */}
+                                                  <select
+                                                      value={heatmapSort}
+                                                      onChange={(e) => setHeatmapSort(e.target.value as any)}
+                                                      className="px-2.5 py-1.5 text-xs rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-black/20 text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-primary-500 font-medium whitespace-nowrap"
+                                                  >
+                                                      <option value="margin-desc">Margin: Highest First</option>
+                                                      <option value="margin-asc">Margin: Lowest First</option>
+                                                      <option value="profit-desc">Net Profit: Highest First</option>
+                                                      <option value="sell-desc">Sell Price: Highest First</option>
+                                                  </select>
+                                              </div>
+                                          </div>
+
+                                          {/* LEGEND SPECIFIERS */}
+                                          <div className="flex flex-wrap items-center gap-3 bg-gray-50/50 dark:bg-black/10 px-4 py-2.5 rounded-2xl border border-gray-100/50 dark:border-gray-800/40 text-[10px] font-bold">
+                                              <span className="text-gray-400 uppercase tracking-widest text-[9px]">Legend / Margin Range:</span>
+                                              <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-red-50 dark:bg-red-950/20 text-red-700 dark:text-red-400 border border-red-100 dark:border-red-900/30">
+                                                  <span className="w-2 h-2 rounded-full bg-red-500"></span> Low (&lt;12%)
+                                              </div>
+                                              <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-amber-50 dark:bg-amber-950/20 text-amber-700 dark:text-amber-400 border border-amber-100 dark:border-amber-900/30">
+                                                  <span className="w-2 h-2 rounded-full bg-amber-500"></span> Fair (12% - 25%)
+                                              </div>
+                                              <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-blue-50 dark:bg-blue-950/20 text-blue-700 dark:text-blue-400 border border-blue-100 dark:border-blue-900/20">
+                                                  <span className="w-2 h-2 rounded-full bg-blue-500"></span> Good (25% - 40%)
+                                              </div>
+                                              <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-emerald-50 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-400 border border-emerald-100 dark:border-emerald-900/30">
+                                                  <span className="w-2 h-2 rounded-full bg-emerald-500"></span> Excellent (&ge;40%)
+                                              </div>
+                                          </div>
+
+                                          {sortedHeatmapData.length === 0 ? (
+                                              <div className="text-center py-12 text-gray-400 text-xs">
+                                                  No inventory products found matching search/category filters.
+                                              </div>
+                                          ) : (
+                                              /* HEATMAP GRID */
+                                              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3.5 max-h-[420px] overflow-y-auto pr-1">
+                                                  {sortedHeatmapData.map(prod => {
+                                                      const style = getMarginStyle(prod.margin);
+                                                      return (
+                                                          <div
+                                                              key={prod.id}
+                                                              className={`p-3.5 rounded-2xl border transition-all duration-300 flex flex-col justify-between h-[155px] ${style.bg} hover:shadow-sm`}
+                                                          >
+                                                              {/* First Row: name & tag */}
+                                                              <div>
+                                                                  <span className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider block truncate max-w-full">
+                                                                      {prod.category || 'Standard'}
+                                                                  </span>
+                                                                  <h5 className="font-extrabold text-gray-800 dark:text-gray-100 text-xs line-clamp-2 leading-snug mt-1" title={prod.name}>
+                                                                      {prod.name}
+                                                                  </h5>
+                                                              </div>
+
+                                                              {/* Middle Row: Price and Margin values */}
+                                                              <div className="mt-3">
+                                                                  <div className="flex justify-between items-baseline text-[10px] text-gray-400 dark:text-gray-500 font-medium">
+                                                                      <span>Cost: {storeProfile.currency}{prod.buyPrice}</span>
+                                                                      <span>Sell: {storeProfile.currency}{prod.sellPrice}</span>
+                                                                  </div>
+                                                                  <div className="flex justify-between items-center mt-2">
+                                                                      <span className="text-[10px] text-gray-500 font-bold font-mono">
+                                                                          +{storeProfile.currency}{prod.profit.toFixed(1)} /pc
+                                                                      </span>
+                                                                      <span className={`px-2 py-0.5 rounded-md text-[10px] font-black tracking-tight ${style.badge}`}>
+                                                                          {prod.margin}%
+                                                                      </span>
+                                                                  </div>
+                                                              </div>
+                                                          </div>
+                                                      );
+                                                  })}
+                                              </div>
+                                          )}
+                                      </div>
+                                  );
+                              })()}
+
+                             {/* Chart Container */}
+                             <div className="p-6 bg-gray-50 dark:bg-gray-800/50 rounded-3xl border border-gray-100 dark:border-gray-800">
+                                 <h4 className="text-xs font-bold text-gray-900 dark:text-white mb-6 uppercase tracking-wider flex items-center gap-2">
+                                     <TrendingUp className="w-4 h-4 text-primary-500 animate-pulse" /> Margin Analysis Chart (Percentage)
+                                 </h4>
+                                 <div className="h-[360px] w-full">
+                                     <ResponsiveContainer width="100%" height="100%">
+                                         <BarChart data={rawChartData} margin={{ top: 20, right: 30, left: 10, bottom: 5 }}>
+                                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={document.documentElement.classList.contains('dark') ? '#374151' : '#e5e7eb'} />
+                                             <XAxis dataKey="name" stroke={document.documentElement.classList.contains('dark') ? '#9ca3af' : '#4b5563'} fontSize={11} fontWeight={600} tickLine={false} />
+                                             <YAxis domain={[0, 100]} unit="%" stroke={document.documentElement.classList.contains('dark') ? '#9ca3af' : '#4b5563'} fontSize={11} fontWeight={600} tickLine={false} />
+                                             <Tooltip 
+                                                 formatter={(value: any) => [`${value}%`, 'Profit Margin']}
+                                                 contentStyle={{ backgroundColor: '#111827', borderColor: '#374151', color: '#fff', borderRadius: '12px' }} 
+                                                 itemStyle={{ color: '#fff' }} 
+                                                 labelClassName="font-bold text-xs"
+                                             />
+                                             <Bar dataKey="margin" radius={[10, 10, 0, 0]} maxBarSize={50}>
+                                                 {rawChartData.map((entry, index) => {
+                                                     const colors = ['#3f51b5', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#06b6d4', '#f43f5e', '#84cc16'];
+                                                     return <Cell key={`cell-${index}`} fill={colors[index % colors.length]} />;
+                                                 })}
+                                             </Bar>
+                                         </BarChart>
+                                     </ResponsiveContainer>
+                                 </div>
+                             </div>
+
+                             {/* Data Breakdown Table */}
+                             <div className="bg-white dark:bg-gray-900 rounded-3xl border border-gray-100 dark:border-gray-800 overflow-hidden shadow-sm">
+                                 <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-black/20">
+                                     <h4 className="text-xs font-bold text-gray-900 dark:text-white uppercase tracking-wider font-sans">Detailed Category Breakdown</h4>
+                                 </div>
+                                 <div className="overflow-x-auto">
+                                     <table className="w-full text-left text-sm">
+                                         <thead>
+                                             <tr className="border-b border-gray-100 dark:border-gray-800 text-xs font-bold uppercase text-gray-400 dark:text-gray-500 bg-gray-50/50 dark:bg-black/10">
+                                                 <th className="p-4">Category Name</th>
+                                                 <th className="p-4 text-right">Items Sold</th>
+                                                 <th className="p-4 text-right">Revenue</th>
+                                                 <th className="p-4 text-right">Est. Cost (COGS)</th>
+                                                 <th className="p-4 text-right">Net Profit</th>
+                                                 <th className="p-4 text-right">Margin (%)</th>
+                                             </tr>
+                                         </thead>
+                                         <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                                             {rawChartData.map((category, idx) => (
+                                                 <tr key={idx} className="hover:bg-gray-50 dark:hover:bg-gray-800/40 transition-colors">
+                                                     <td className="p-4 font-bold text-gray-700 dark:text-gray-200">{category.name}</td>
+                                                     <td className="p-4 text-right font-medium text-gray-600 dark:text-gray-400">{category.itemsSold} units</td>
+                                                     <td className="p-4 text-right font-medium text-[#4f46e5] dark:text-[#818cf8]">{storeProfile.currency} {category.revenue.toLocaleString()}</td>
+                                                     <td className="p-4 text-right font-medium text-gray-600 dark:text-gray-400">{storeProfile.currency} {category.cost.toLocaleString()}</td>
+                                                     <td className="p-4 text-right font-extrabold text-[#10b981] dark:text-[#34d399]">{storeProfile.currency} {category.profit.toLocaleString()}</td>
+                                                     <td className="p-4 text-right">
+                                                         <span className={`px-2.5 py-1 rounded-lg text-xs font-extrabold ${
+                                                             category.margin >= 40 ? 'bg-green-100 text-green-700 dark:bg-green-950/40 dark:text-green-400 font-bold' :
+                                                             category.margin >= 20 ? 'bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-400 font-bold' :
+                                                             'bg-orange-105 text-orange-700 dark:bg-orange-950/40 dark:text-orange-400 font-bold'
+                                                         }`}>
+                                                             {category.margin}%
+                                                         </span>
+                                                     </td>
+                                                 </tr>
+                                             ))}
+                                         </tbody>
+                                     </table>
+                                 </div>
+                             </div>
+                         </div>
+                     );
+                 })()}
+             </div>
+         </div>
       )}
     </div>
   );
